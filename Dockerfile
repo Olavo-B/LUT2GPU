@@ -1,12 +1,9 @@
 # Use uma imagem base do Python
-FROM jupyter/base-notebook:x86_64-python-3.11.6
+FROM nvcr.io/nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
 
+ENV DEBIAN_FRONTEND=noninteractive 
 
-# Switch to root user before installing packages
-USER root
-
-
-# Update package list, install required dependencies, and clean apt cache
+# Update package list and install dependencies
 RUN apt-get update && apt-get install -y \
     curl \
     git \
@@ -23,39 +20,53 @@ RUN apt-get update && apt-get install -y \
     graphviz \
     xdot \
     pkg-config \
-    python3 \
+    software-properties-common \
     libboost-system-dev \
     libboost-python-dev \
     libboost-filesystem-dev \
     zlib1g-dev \
     verilator \
     iverilog && \
+    add-apt-repository ppa:deadsnakes/ppa && \
+    apt-get update && \
+    apt-get install -y python3.12 python3.12-venv python3.12-dev python3-pip && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
-    
 
-# Clone Yosys repository, initialize submodules, and configure for Clang or GCC
+# Set environment variables for CUDA
+ENV PATH="/usr/local/cuda/bin:${PATH}"
+ENV LD_LIBRARY_PATH="/usr/local/cuda/lib64:${LD_LIBRARY_PATH}"
+
+
+
+
+# Clone Yosys repository, initialize submodules, and compile
 RUN git clone https://github.com/YosysHQ/yosys.git yosys && \
     cd yosys && \
     git submodule update --init && \
-    make config-clang && \  
+    make config-clang && \
     make -j$(nproc) && \
     make install
 
-
-
-# Set the working directory to /app
+# Set working directory
 WORKDIR /app
 
-# Copy the content of your project folder into the container
+# Copy project content into the container
 COPY . .
 
-# Install the LoadDataset package from GitHub and the requirements
+# Create a virtual environment with Python 3.12 and install dependencies
+RUN python3.12 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:${PATH}"
+RUN pip install --upgrade pip
 RUN pip install git+https://github.com/Olavo-B/LoadDataset
-
-# Install the requirements
 RUN pip install -r requirements.txt
 
+# Install Jupyter Notebook inside the virtual environment
+RUN pip install jupyter
 
-# Set the default command to bash
+# Expose the Jupyter Notebook port
+EXPOSE 8888
+
+# Set default command for the container
 CMD ["bash"]
+
