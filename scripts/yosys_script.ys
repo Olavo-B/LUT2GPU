@@ -1,0 +1,6 @@
+read_pla somador.pla        # Lê a tabela verdade
+synth                       # Executa a síntese geral
+abc -script myscript.rc     # Chama o ABC com os comandos desejados
+write_verilog somador.v     # Salva o Verilog resultante
+write_dot somador.dot       # Gera o arquivo DOT do circuito
+write_blif somador.blif     # Salva o BLIF final
