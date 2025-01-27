@@ -1,0 +1,18 @@
+# Lê a tabela verdade
+# read_pla {{ tabela_verdade }}  
+
+# Executa a síntese geral
+synth
+
+# Chama o ABC com os comandos desejados
+abc -script {{ abc_script }}  
+
+
+# Salva o Verilog resultante
+# write_verilog {{ verilog_output }}  
+
+# Gera o arquivo DOT do circuito
+# write_dot {{ dot_output }}  
+
+# Salva o BLIF final
+# write_blif {{ blif_output }}
