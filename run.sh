@@ -19,4 +19,4 @@ echo_info() {
 
 # Run the container with default settings
 echo_success "Running container: $IMAGE_NAME"
-docker run --gpus all --rm -it   -p 8888:8888 --shm-size=1g --ulimit memlock=-1 --ulimit stack=67108864 --name "$IMAGE_NAME" -v "$FULL_PATH:/app" "$IMAGE_NAME" jupyter notebook --ip 0.0.0.0 --no-browser --allow-root
+docker run --gpus all --rm -d   -p 8888:8888 --shm-size=1g --ulimit memlock=-1 --ulimit stack=67108864 --name "$IMAGE_NAME" -v "$FULL_PATH:/app" "$IMAGE_NAME" jupyter notebook --ip 0.0.0.0 --no-browser --allow-root --NotebookApp.token='101'
