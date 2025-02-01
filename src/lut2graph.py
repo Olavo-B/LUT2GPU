@@ -12,7 +12,6 @@
 import matplotlib.pyplot as plt
 from itertools import product
 import networkx as nx
-import sys
 import os
 
 
@@ -46,6 +45,18 @@ class Graph():
     @property
     def graph(self):
         return self.G
+    
+    @property
+    def operations(self):
+        return sum([data.get('operations', 0) for node, data in self.G.nodes(data=True)])
+    
+    @property
+    def inputs(self):
+        return [node for node, data in self.G.nodes(data=True) if data.get('type') == 'input']
+    
+    @property
+    def outputs(self):
+        return [node for node, data in self.G.nodes(data=True) if data.get('type') == 'output']
     
     #====================#
     #  Private Methods   #
@@ -171,7 +182,44 @@ class Graph():
                 var_name = var_part.replace('assign', '').strip()
                 # Clean the equation part
                 equation = eq_part.replace(';', '').strip()
-                equations[var_name] = equation
+
+                # 2025-02-01 12:31:36
+                # Count all types of operations
+                operation_count = (
+                    equation.count('&') +  # Bitwise AND
+                    equation.count('|') +  # Bitwise OR
+                    equation.count('~') +  # Bitwise NOT
+                    equation.count('^') +  # XOR
+                    equation.count('+') +  # Addition
+                    equation.count('-') +  # Subtraction
+                    equation.count('*') +  # Multiplication
+                    equation.count('/') +  # Division
+                    equation.count('%') +  # Modulus
+                    equation.count('==') + # Equality
+                    equation.count('!=') + # Inequality
+                    equation.count('>') +  # Greater than
+                    equation.count('<') +  # Less than
+                    equation.count('>=') + # Greater than or equal
+                    equation.count('<=') + # Less than or equal
+                    equation.count('<<') + # Left shift
+                    equation.count('>>') + # Right shift
+                    equation.count('?')    # Ternary operator
+                )
+
+                # 2025-01-28 19:43:23
+                # Change Verilog sintax to C/C++ sintax
+                equation = equation.replace('^', '^')
+                equation = equation.replace('&', '&&')
+                equation = equation.replace('|', '||')
+                equation = equation.replace('~', '!')
+
+
+                # Store the equation and the operation count
+                equations[var_name] = {
+                    "equation": equation,
+                    "operations": operation_count
+                }
+
         return equations
 
     def __parse_blif(self, blif_path:str, verilog_path:str) -> None:
@@ -238,11 +286,11 @@ class Graph():
             full_truth_table = self.__pla_to_binary_vector(partial_truth_table, num_vars)
             self.G.nodes[node]['truth_value'] = self.__binary_to_decimal("".join(map(str, full_truth_table)))
             if node in equations.keys():
-                self.G.nodes[node]['equation'] = equations[node]
-        
-        if self.debug:
-            import pprint 
-            pprint.pprint(list(self.G.nodes(data=True)))
+                self.G.nodes[node]['equation'] = equations[node]['equation']
+                self.G.nodes[node]['operations'] = equations[node]['operations']
+        # if self.debug:
+        #     import pprint 
+        #     pprint.pprint(list(self.G.nodes(data=True)))
 
 class CudaGenerator():
     """
@@ -360,15 +408,12 @@ __global__ void evaluate_circuit(int *output) {
         # Generate equations in topological order
         for node in self.ordered_nodes:
             if node not in self.inputs:  # Skip input nodes
-                input_order = self.G.nodes[node].get('input_order', [])
-                truth_value = self.G.nodes[node].get('truth_value')
-                
-                if truth_value is not None and input_order:
-                    shifts = []
-                    for i, input_var in enumerate(input_order):
-                        shifts.append(f"({input_var} << {len(input_order) - 1 - i})")
-                    equation = f"        {node} = (({truth_value}U) >> (" + " + ".join(shifts) + ")) & 1;\n"
-                    self.cuda_code += equation
+                # 2025-01-28 19:48:18
+                # Add equations to the CUDA code
+
+                equation = self.G.nodes[node].get('equation')
+                if equation is not None:
+                    self.cuda_code += f"        {node} = ({equation});\n"
         
         self.cuda_code += "\n        // Combine outputs into a single integer\n"
         self.cuda_code += "        output[idx] = 0;\n"
@@ -380,14 +425,17 @@ __global__ void evaluate_circuit(int *output) {
         
         self.cuda_code += "    }\n}\n\n"
 
-    def __generate_cuda_main(self) -> None:
+    def __generate_cuda_main(self, num_blocks:int  = 1024, num_threads:int = 1024) -> None:
         """
         Create the main function for the CUDA code.
 
 
         Args:
         ------
-        - None
+        - num_blocks: int
+            The number of blocks to use.
+        - num_threads: int
+            The number of threads per block.
 
         Returns:
         ------
@@ -414,9 +462,8 @@ int main() {
     CHECK_CUDA_ERROR(cudaMalloc(&d_output, output_size));
     
     // Calculate grid and block dimensions
-    int threadsPerBlock = 1024;
-    // int blocksPerGrid = (num_combinations + threadsPerBlock - 1) / threadsPerBlock;
-    int blocksPerGrid  = 1024*1024;
+    int threadsPerBlock = """ + str(num_threads) + """;
+    int blocksPerGrid  = """ + str(num_blocks) + """;
     
     // Record start time
     cudaEventRecord(start);
@@ -511,13 +558,16 @@ int main() {
     # Public Methods     #
     #====================#
 
-    def generate_code(self) -> str:
+    def generate_code(self, num_blocks:int  = 1024, num_threads:int = 1024) -> str:
         """
         Generate the CUDA code for the LUT graph.
 
         Args:
         ------
-        - None
+        - num_blocks: int
+            The number of blocks to use.
+        - num_threads: int
+            The number of threads per block.
 
         Returns:
         ------
@@ -527,7 +577,7 @@ int main() {
 
         self.__generate_cuda_header()
         self.__generate_cuda_kernel()
-        self.__generate_cuda_main()
+        self.__generate_cuda_main(num_blocks, num_threads)
         return self.cuda_code
     
     def write_code(self, file_path:str) -> str:
@@ -574,53 +624,8 @@ int main() {
 
         os.system(f"nvcc {file_path} -o {folder}/circuit")
         return f"{folder}/circuit"
-
-    def run_code(self, executable:str) -> None:
-        """
-        Run the code.
-
-        Args:
-        ------
-        - executable: str
-            The name of the executable.
-        
-        Returns:
-        ------
-        - None
-        """
-
-        print(Style.BOLD + Style.OKGREEN + 
-              f"Running CUDA code {executable}" + Style.ENDC)
-
-        os.system(f"./{executable}")
-        return None
     
-    def run_with_profiling(self, executable:str) -> None:
-        """
-        Run the code with profiling.
-
-        Args:
-        ------
-        - executable: str
-            The name of the executable.
-
-        Returns:
-        ------
-        - None
-
-        Note:
-        ------
-        This method uses NVIDIA's Nsight Compute to profile the code.
-        """
-
-        print(Style.BOLD + Style.OKGREEN + 
-              f"Running CUDA code {executable} with profile" + Style.ENDC)
-
-
-        os.system(f"ncu ./{executable}")
-        return None
-    
-    def run(self, file_path:str , profile:bool = False) -> None:
+    def run(self, file_path:str , num_blocks:int = 1024, num_threads:int = 1024) -> str:
         """
         Run the CUDA code.
 
@@ -628,20 +633,20 @@ int main() {
         ------
         - file_path: str
             The path to the file.
-        - profile: bool
-            A flag that indicates if profiling should be used.
+        - num_blocks: int
+            The number of blocks to use.
+        - num_threads: int
+            The number of threads per block.
         
         
         Returns:
         ------
-        - None
+        - file_path: str
         """
 
-        self.generate_code()
+        self.generate_code(num_blocks, num_threads)
         file_path = self.write_code(file_path)
-        executable = self.compile_code(file_path)
-        self.run_code(executable) if not profile else self.run_with_profiling(executable)
-        return None
+        return file_path
     
 
     

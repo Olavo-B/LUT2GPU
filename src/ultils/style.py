@@ -18,3 +18,6 @@ class Style():
     ENDC = '\033[0m'
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
+    BRIGHT = '\033[1m'
+    YELLOW = '\033[93m'
+    RESET = '\033[0m'
