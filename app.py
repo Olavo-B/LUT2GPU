@@ -12,26 +12,17 @@ import matplotlib.pyplot as plt
 from itertools import product
 import os
 
-from src.lut2graph import Graph
-from src.lut2graph import CudaGenerator
+
+from src.runMethods import RunMethods
 
 def main():
     blif_path = "results/blif_generator/somador.blif"
     verilog_path = "results/blif_generator/somador.v"
     
-    G = Graph(blif_path, verilog_path, debug=False).graph
-
-    # Draw the graph
-    pos = nx.kamada_kawai_layout(G)
-    nx.draw(G, pos, with_labels=True)
-    if not os.path.exists("results/graphs"):
-        os.makedirs("results/graphs")
-    plt.savefig("results/graphs/somador.png")
-
-    # Generate the CUDA code
-    cuda_gen = CudaGenerator(G)
-    cuda_gen.run("results/cuda/somador.cu", profile=False)
-
+    runner = RunMethods(name="rato", blif_path=blif_path, 
+                        verilog_path=verilog_path, debug=True)
+    runner.run_all(blocks_per_grid=64, threads_per_block=1024, num_runs=3)
+    runner.analyze_results()
 
 if __name__ == "__main__":
     main()
