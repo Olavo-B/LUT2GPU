@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 from itertools import product
 import networkx as nx
 import os
+import re
 
 
 from src.ultils.style import Style
@@ -222,6 +223,27 @@ class Graph():
 
         return equations
 
+
+    def __rename_ports(self, input_file, output_file, file_type='blif'):
+        """
+        Rename input, output, and internal port names in BLIF or Verilog files, 
+        removing brackets, zero-padding single-digit indices.
+        """
+        with open(input_file, 'r') as f:
+            content = f.read()
+        
+        # Remove line continuation backslashes
+        content = re.sub(r'\\\n\s*', '', content)
+        
+        # Replace port references with brackets
+        content = re.sub(r'(\\?[a-zA-Z]+)\[(\d+)\]', 
+                        lambda m: f"{m.group(1).replace('\\', '')}{'0' if len(m.group(2)) == 1 else ''}{m.group(2)}", 
+                        content)
+        
+        with open(output_file, 'w') as f:
+            f.write(content)
+
+
     def __parse_blif(self, blif_path:str, verilog_path:str) -> None:
         """
         Parse a BLIF file and create a graph.
@@ -239,9 +261,15 @@ class Graph():
 
         """
     
+        # 2025-02-03 13:22:03
+        # Rename ports in BLIF and Verilog files
+        self.__rename_ports(blif_path, blif_path)
+        self.__rename_ports(verilog_path, verilog_path, file_type='verilog')
     
         with open(blif_path, 'r') as file:
             lines = file.readlines()
+
+
 
         equations = self.__extract_equations(verilog_path)
         
@@ -254,16 +282,29 @@ class Graph():
         for line in lines:
             tokens = line.strip().split()
 
-            if tokens[0] == ".inputs":
+            if len(tokens) == 0:
+                continue
+            elif tokens[0] == ".inputs":
                 inputs = tokens[1:]
                 self.G.add_nodes_from(inputs, type="input")
             elif tokens[0] == ".outputs":
                 outputs = tokens[1:]
                 self.G.add_nodes_from(outputs, type="output")
             elif tokens[0] == ".names":
+
+                # 2025-02-03 13:22:03
+                # Continue if the node is not in the equations
+                if tokens[-1] not in equations.keys():
+                    continue
+
                 parsing_names = True
                 current_node = tokens[-1]
                 dependencies = tokens[1:-1]
+
+                for dep in dependencies:
+                    if dep not in self.G.nodes():
+                        self.G.add_node(dep, type="intermediary", input_order=[], truth_value=None)
+                    self.G.add_edge(dep, current_node)
         
                 node_data[current_node] = []
     
@@ -272,14 +313,12 @@ class Graph():
                 self.G.nodes[current_node]['input_order'] = dependencies
                 self.G.nodes[current_node]['truth_value'] = None
 
-                for dep in dependencies:
-                    if dep not in self.G.nodes():
-                        self.G.add_node(dep, type="intermediary", input_order=[], truth_value=None)
-                    self.G.add_edge(dep, current_node)
             elif parsing_names and current_node is not None and len(tokens) > 1:
                 input_values = tokens[:-1]
                 output_value = tokens[-1]
                 node_data[current_node].append({"input": input_values, "output": output_value})
+            else:
+                parsing_names = False
         
         for node, partial_truth_table in node_data.items():
             num_vars = len(input_order[node])
@@ -385,18 +424,17 @@ class CudaGenerator():
         """
 
         self.cuda_code += """
-__global__ void evaluate_circuit(int *output) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    int num_combinations = 1 << """ + str(self.num_inputs) + """;
+    __global__ void evaluate_circuit(int *output, unsigned long long start_idx, unsigned long long end_idx) {
+        unsigned long long idx = blockIdx.x * blockDim.x + threadIdx.x + start_idx;
 
-    if (idx < num_combinations) {
-        int x = idx;
-        """
+        if (idx < end_idx) {
+            unsigned long int x = idx;
+            """
         # Initialize all variables to 0
         all_nodes = set(self.G.nodes())
         self.cuda_code += "\n        // Initialize all variables\n"
         for node in all_nodes:
-            self.cuda_code += f"    unsigned int {node};\n"
+            self.cuda_code += f"    unsigned long long int {node};\n"
         
         self.cuda_code += "\n        // Set input values\n"
         # Input variable assignments
@@ -408,151 +446,112 @@ __global__ void evaluate_circuit(int *output) {
         # Generate equations in topological order
         for node in self.ordered_nodes:
             if node not in self.inputs:  # Skip input nodes
-                # 2025-01-28 19:48:18
-                # Add equations to the CUDA code
-
                 equation = self.G.nodes[node].get('equation')
                 if equation is not None:
                     self.cuda_code += f"        {node} = ({equation});\n"
         
         self.cuda_code += "\n        // Combine outputs into a single integer\n"
-        self.cuda_code += "        output[idx] = 0;\n"
+        # Adjust output indexing to use relative index within the launch
+        self.cuda_code += "        output[idx - start_idx] = 0;\n"
         
         # Combine outputs
-        for i, output in enumerate(reversed(self.outputs)):
-            self.cuda_code += f"        output[idx] |= ({output} << {i});\n"
+        for i, output in enumerate(self.outputs):
+            self.cuda_code += f"        output[idx - start_idx] |= ({output} << {i});\n"
 
         
         self.cuda_code += "    }\n}\n\n"
 
-    def __generate_cuda_main(self, num_blocks:int  = 1024, num_threads:int = 1024) -> None:
+    def __generate_cuda_main(self, threads_per_block:int = 256) -> None:
         """
-        Create the main function for the CUDA code.
-
-
-        Args:
-        ------
-        - num_blocks: int
-            The number of blocks to use.
-        - num_threads: int
-            The number of threads per block.
-
-        Returns:
-        ------
-        - None
-
+        Create the main function with improved memory management and error handling.
         """
-        self.cuda_code += """
-int main() {
-    // Calculate number of input combinations
-    const int num_inputs = """ + str(self.num_inputs) + """;
-    const int num_combinations = 1 << num_inputs;
-    const int output_size = num_combinations * sizeof(int);
-    
-    // Create CUDA events for timing
-    cudaEvent_t start, stop;
-    cudaEventCreate(&start);
-    cudaEventCreate(&stop);
-    
-    // Allocate host memory
-    int *h_output = (int*)malloc(output_size);
-    
-    // Allocate device memory
-    int *d_output;
-    CHECK_CUDA_ERROR(cudaMalloc(&d_output, output_size));
-    
-    // Calculate grid and block dimensions
-    int threadsPerBlock = """ + str(num_threads) + """;
-    int blocksPerGrid  = """ + str(num_blocks) + """;
-    
-    // Record start time
-    cudaEventRecord(start);
-    
-    // Launch kernel
-    evaluate_circuit<<<blocksPerGrid, threadsPerBlock>>>(d_output);
-    CHECK_CUDA_ERROR(cudaGetLastError());
-    
-    // Record stop time
-    cudaEventRecord(stop);
-    cudaEventSynchronize(stop);
-    
-    // Calculate elapsed time
-    float milliseconds = 0;
-    cudaEventElapsedTime(&milliseconds, start, stop);
-    
-    // Copy result back to host
-    CHECK_CUDA_ERROR(cudaMemcpy(h_output, d_output, output_size, cudaMemcpyDeviceToHost));
-    
-    // Print timing information
-    printf("\\nGPU Execution time: %.3f milliseconds\\n", milliseconds);
-    
-    // Print header only if we find invalid results
-    bool header_printed = false;
-    
-    // Check results and print only invalid ones
-    for (int i = 0; i < num_combinations; i++) {
-        // Get input values
-        int input1 = 0;
-        int input2 = 0;
+        self.cuda_code += f"""
+    int main() {{
+        // Calculate number of input combinations
+        const unsigned int num_inputs = {self.num_inputs};
+        const unsigned long long num_combinations = 1ULL << num_inputs;
         
-        // Extract first half of inputs for input1
-        for (int j = num_inputs/2 - 1; j >= 0; j--) {
-            input1 = (input1 << 1) | ((i >> (j + num_inputs/2)) & 1);
-        }
+        const int threadsPerBlock = {threads_per_block};
+        const int numSMs = 24;  // For RTX 4060
+        const int blocksPerSM = 32;
+        const int optimalBlocks = numSMs * blocksPerSM;  // 768 blocks
         
-        // Extract second half of inputs for input2
-        for (int j = num_inputs/2 - 1; j >= 0; j--) {
-            input2 = (input2 << 1) | ((i >> j) & 1);
-        }
+        // Calculate required kernel launches
+        const unsigned long long threadsPerLaunch = (unsigned long long)optimalBlocks * threadsPerBlock;
+        const unsigned long long numLaunches = (num_combinations + threadsPerLaunch - 1) / threadsPerLaunch;
         
-        // Calculate expected sum
-        int expected_sum = input1 + input2;
+        printf("Threads per block: %d\\n", threadsPerBlock);
+        printf("Blocks per grid: %d\\n", optimalBlocks);
+        printf("Total threads per launch: %llu\\n", threadsPerLaunch);
+        printf("Required launches: %llu\\n\\n", numLaunches);
         
-        // Get actual output
-        int actual_output = h_output[i];
+        // Allocate memory and set up timing
+        cudaEvent_t start, stop;
+        CHECK_CUDA_ERROR(cudaEventCreate(&start));
+        CHECK_CUDA_ERROR(cudaEventCreate(&stop));
         
-        // Only print if the result is invalid
-        if (actual_output != expected_sum) {
-            // Print header if this is the first invalid result
-            if (!header_printed) {
-                printf("\\nInvalid Results:\\n");
-                printf("Inputs");
-                for (int k = 0; k < """ + str(self.num_inputs//3) + """; k++) {
-                    printf("\\t");
-                }
-                printf("-> Output | Expected\\n");
-                header_printed = true;
-            }
+        // Allocate host and device memory for each launch
+        const size_t outputSizePerLaunch = threadsPerLaunch * sizeof(int);
+        int *h_output = NULL;
+        int *d_output = NULL;
+        
+        h_output = (int*)malloc(outputSizePerLaunch);
+        if (!h_output) {{
+            printf("Error: Host memory allocation failed\\n");
+            return 1;
+        }}
+        
+        CHECK_CUDA_ERROR(cudaMalloc(&d_output, outputSizePerLaunch));
+        
+        // Record start time
+        CHECK_CUDA_ERROR(cudaEventRecord(start));
+        
+        // Process all combinations in chunks
+        for (unsigned long long i = 0; i < numLaunches; i++) {{
+            unsigned long long start_idx = i * threadsPerLaunch;
+            unsigned long long end_idx = start_idx + threadsPerLaunch;
+            if (end_idx > num_combinations) {{
+                end_idx = num_combinations;
+            }}
             
-            // Print input combinations
-            for (int j = num_inputs - 1; j >= 0; j--) {
-                printf("%d ", (i >> j) & 1);
-            }
-            printf("\\t-> ");
+            // Clear device memory before kernel launch
+            CHECK_CUDA_ERROR(cudaMemset(d_output, 0, outputSizePerLaunch));
             
-            // Print output values
-            for (int j = """ + str(self.num_outputs - 1) + """; j >= 0; j--) {
-                printf("%d", (actual_output >> j) & 1);
-            }
+            // Launch kernel with start and end indices
+            evaluate_circuit<<<optimalBlocks, threadsPerBlock>>>(d_output, start_idx, end_idx);
             
-            printf(" | Expected: %d, Got: %d\\n", expected_sum, actual_output);
-        }
-    }
-    
-    // Print message if no invalid results were found
-    if (!header_printed) {
-        printf("\\nAll results are valid!\\n");
-    }
-    
-    // Cleanup
-    cudaEventDestroy(start);
-    cudaEventDestroy(stop);
-    free(h_output);
-    cudaFree(d_output);
-    
-    return 0;
-}
-"""
+            // Check for kernel launch errors
+            cudaError_t kernelLaunchError = cudaGetLastError();
+            if (kernelLaunchError != cudaSuccess) {{
+                printf("Kernel launch error: %s\\n", cudaGetErrorString(kernelLaunchError));
+                cudaFree(d_output);
+                free(h_output);
+                return 1;
+            }}
+            
+            // Copy results for this launch
+            CHECK_CUDA_ERROR(cudaMemcpy(h_output, d_output, outputSizePerLaunch, cudaMemcpyDeviceToHost));
+            
+            // Optional: Process or save h_output here if needed
+        }}
+        
+        // Record stop time and calculate elapsed time
+        CHECK_CUDA_ERROR(cudaEventRecord(stop));
+        CHECK_CUDA_ERROR(cudaEventSynchronize(stop));
+        
+        float milliseconds = 0;
+        CHECK_CUDA_ERROR(cudaEventElapsedTime(&milliseconds, start, stop));
+        printf("GPU Execution time: %.3f milliseconds\\n", milliseconds);
+        
+        // Cleanup
+        CHECK_CUDA_ERROR(cudaEventDestroy(start));
+        CHECK_CUDA_ERROR(cudaEventDestroy(stop));
+        free(h_output);
+        CHECK_CUDA_ERROR(cudaFree(d_output));
+        
+        return 0;
+    }}
+    """
 
     #====================#
     # Public Methods     #
@@ -577,7 +576,7 @@ int main() {
 
         self.__generate_cuda_header()
         self.__generate_cuda_kernel()
-        self.__generate_cuda_main(num_blocks, num_threads)
+        self.__generate_cuda_main(num_threads)
         return self.cuda_code
     
     def write_code(self, file_path:str) -> str:

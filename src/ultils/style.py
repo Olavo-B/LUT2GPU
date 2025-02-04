@@ -21,3 +21,29 @@ class Style():
     BRIGHT = '\033[1m'
     YELLOW = '\033[93m'
     RESET = '\033[0m'
+
+class Mensage():
+    @staticmethod
+    def debug(message):
+        print(f"{Style.OKCYAN}[DEBUG] {message}{Style.ENDC}")
+
+    @staticmethod
+    def success(message):
+        print(f"{Style.OKGREEN}[SUCCESS] {message}{Style.ENDC}")
+    
+    @staticmethod
+    def error(message):
+        print(f"{Style.FAIL}[ERROR] {message}{Style.ENDC}")
+    
+    @staticmethod
+    def warning(message):
+        print(f"{Style.WARNING}[WARNING] {message}{Style.ENDC}")
+    
+    @staticmethod
+    def info(message):
+        print(f"{Style.OKBLUE}[INFO] {message}{Style.ENDC}")
+    
+    @staticmethod
+    def bold(message):
+        print(f"{Style.BOLD}{message}{Style.ENDC}")
+    

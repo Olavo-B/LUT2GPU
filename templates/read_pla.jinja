@@ -1,18 +1,24 @@
 # Lê a tabela verdade
-# read_pla {{ tabela_verdade }}  
+read_verilog {{ verilog_path }}
+hierarchy -check -top {{top_module}}
 
 # Executa a síntese geral
-synth
+opt_expr
+opt_merge -nomux
+proc
+opt_muxtree
+opt_reduce
+opt_merge
+opt_clean
+opt_expr
+synth -flatten
+opt_clean
+# synth
 
-# Chama o ABC com os comandos desejados
-abc -script {{ abc_script }}  
-
-
-# Salva o Verilog resultante
-# write_verilog {{ verilog_output }}  
-
-# Gera o arquivo DOT do circuito
-# write_dot {{ dot_output }}  
 
 # Salva o BLIF final
-# write_blif {{ blif_output }}
+write_blif {{ blif_output }} 
+
+
+
+

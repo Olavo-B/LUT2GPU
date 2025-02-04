@@ -1,0 +1,168 @@
+#!/usr/bin/env python3
+# /*****************************************************************************/
+#  * File: verilog_runner.py
+#  * Author: AI Assistant
+#  * Date: 2025-02-04
+#  * Description: Comprehensive Verilog simulation and performance testing tool
+# /*****************************************************************************/
+
+import os
+import argparse
+import sys
+
+from src.ultils.runScripts import RunScripts
+from src.runMethods import RunMethods
+
+def validate_file(file_path):
+    """Validate if the file exists and has a .v extension"""
+    if not os.path.exists(file_path):
+        raise argparse.ArgumentTypeError(f"File not found: {file_path}")
+    if not file_path.lower().endswith('.v'):
+        raise argparse.ArgumentTypeError(f"File must be a Verilog file (.v): {file_path}")
+    return file_path
+
+def main():
+    # Argument Parser
+    parser = argparse.ArgumentParser(
+        description='Comprehensive Verilog Simulation and Performance Testing Tool',
+        epilog='Example: python verilog_runner.py -v circuit.v -m <top_module name> --all'
+    )
+
+    # Required Arguments
+    parser.add_argument('-v', '--verilog', 
+                        type=validate_file, 
+                        required=True, 
+                        help='Path to the input Verilog file')
+    
+    parser.add_argument('-m', '--module', 
+                        type=str, 
+                        required=True, 
+                        help='Top-level module name in the Verilog file')
+
+    # Simulation Type Selection
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('--cuda', 
+                       action='store_true', 
+                       help='Run only CUDA simulation')
+    group.add_argument('--iverilog', 
+                       action='store_true', 
+                       help='Run only Icarus Verilog simulation')
+    group.add_argument('--verilator', 
+                       action='store_true', 
+                       help='Run only Verilator simulation')
+    group.add_argument('--all', 
+                       action='store_true', 
+                       help='Run all simulations (CUDA, Iverilog, Verilator)')
+
+    # Performance and Profiling Options
+    parser.add_argument('--name', 
+                        default='verilog_test', 
+                        help='Name for the test run (default: verilog_test)')
+    
+    parser.add_argument('--num-runs', 
+                        type=int, 
+                        default=10, 
+                        help='Number of performance test runs (default: 10)')
+    
+    parser.add_argument('--cuda-threads', 
+                        type=int, 
+                        default=256, 
+                        help='CUDA threads per block (default: 256)')
+    
+    parser.add_argument('--cuda-blocks', 
+                        type=int, 
+                        default=768, 
+                        help='CUDA blocks per grid (default: 768)')
+    
+    parser.add_argument('--profile', 
+                        action='store_true', 
+                        help='Enable CUDA profiling')
+    
+    parser.add_argument('--debug', 
+                        action='store_true', 
+                        help='Enable debug output')
+
+    # Parse arguments
+    args = parser.parse_args()
+
+    # Determine simulation modes
+    run_modes = []
+    if args.cuda or args.all:
+        run_modes.append('cuda')
+    if args.iverilog or args.all:
+        run_modes.append('iverilog')
+    if args.verilator or args.all:
+        run_modes.append('verilator')
+
+    # If no mode specified, default to all
+    if not run_modes:
+        run_modes = ['cuda', 'iverilog', 'verilator']
+    
+    # Ensure output directories exist
+    os.makedirs(f'results/', exist_ok=True)
+    PATH = f'results/{args.name}'
+
+    # Move verilog file to the correct path
+    os.makedirs(os.path.join(PATH, 'verilog'), exist_ok=True)
+    os.system(f"cp {args.verilog} {os.path.join(PATH, 'verilog')}")
+
+    print(f'{PATH}/verilog/{os.path.basename(args.verilog)}')
+    
+    # Create RunScripts instance
+    script_runner = RunScripts(
+        path=PATH,
+        verilog_path=f'{os.path.basename(args.verilog)}', 
+        top_module=args.module,
+        args={'otimizations': ["resyn3", 'resyn'], 'lut_k': 5},
+        debug=args.debug
+    ).run() 
+
+
+    # Create RunMethods instance
+    runner = RunMethods(
+        name=args.name, 
+        blif_path=os.path.join(PATH, 'somador.blif'), 
+        verilog_path=os.path.join(PATH, 'verilog', 'somador.v'), 
+        debug=args.debug
+    )
+
+    # Execution block
+    try:
+        # Determine base paths for different simulation types
+        base_path = f'results/{args.name}'
+        
+        if 'cuda' in run_modes:
+            print("\n🚀 Running CUDA Simulation:")
+            runner.run_cuda(
+                cuda_path=f'{base_path}/cuda', 
+                threads_per_block=args.cuda_threads, 
+                blocks_per_grid=args.cuda_blocks, 
+                num_runs=args.num_runs, 
+                profile=args.profile
+            )
+        
+        if 'iverilog' in run_modes:
+            print("\n🧩 Running Icarus Verilog Simulation:")
+            runner.run_iverilog(
+                verilog_path=f'{base_path}/verilog', 
+                exe_name='circuit', 
+                num_runs=args.num_runs
+            )
+        
+        if 'verilator' in run_modes:
+            print("\n🔬 Running Verilator Simulation:")
+            runner.run_verilator(
+                verilator_path=f'{base_path}/verilator', 
+                num_runs=args.num_runs
+            )
+
+        # Analyze overall results
+        print("\n📊 Performance Analysis:")
+        runner.analyze_results()
+
+    except Exception as e:
+        print(f"❌ Error during simulation: {e}")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()

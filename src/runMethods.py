@@ -17,7 +17,8 @@ from datetime import datetime
 
 from src.lut2graph import Graph
 from src.lut2graph import CudaGenerator
-from src.ultils.style import Style
+from src.ultils.style import Mensage
+from src.ultils.testbenchConstructor import VerilogTestbenchGenerator
 
 class RunMethods:
     """
@@ -40,25 +41,19 @@ class RunMethods:
         self.graph = Graph(blif_path, verilog_path, debug=debug) # Graph object
         self.G = self.graph.graph # NetworkX graph object
         self.folder_path = self.__create_folder(name)
+        self.mensage = Mensage()
 
-        # 2025-01-31 17:57:37
-        # Temporary fix to get the blif and verilog path into the results folder
-        # Copy blif and verilog files to results folder
-        if self.debug:
-            print(f"{Style.BRIGHT}{Style.OKCYAN}Copying source files to results folder...{Style.RESET}")
-            
-        os.system(f"cp {blif_path} {self.folder_path}")
-        os.system(f"cp {verilog_path} {self.folder_path}/verilog")
-        verilog_path = verilog_path.split('/')
-        verilog_path = '/'.join(verilog_path[:-1])
-        os.system(f"cp {verilog_path}/tb_somador.v {self.folder_path}/verilog")
+        # Generate testbench for Verilog module
+        tb_gen = VerilogTestbenchGenerator(f"{verilog_path}", debug=debug)
+        tb_gen.save_testbench(f"{self.folder_path}/verilog")
+
 
         self.results_file = f"{self.folder_path}/performance_results.csv"
         self.__create_results_file()
 
-    #====================#
-    # Private Methods    #
-    #====================#
+    #=================#
+    # Private methods #
+    #=================#
 
     def __create_folder(self, folder_path: str) -> str:
         """
@@ -82,21 +77,7 @@ class RunMethods:
     def __save_result(self, implementation: str, execution_time: float, 
                      throughput: float, threads_per_block: int = None, 
                      blocks_per_grid: int = None):
-        """
-        Save a single performance result to CSV file.
-
-        Args:
-            implementation (str): Name of the implementation (cuda/iverilog/verilator)
-            execution_time (float): Execution time in milliseconds
-            throughput (float): Throughput in combinations per second
-            threads_per_block (int, optional): CUDA threads per block. Defaults to None.
-            blocks_per_grid (int, optional): CUDA blocks per grid. Defaults to None.
-        """
-
-        # 2025-02-01 16:40:37
-        # Verify if the the current directory is the same as the main app folder
-        # If not, change to the main app folder, save the results and 
-        # return to the original directory
+        """Save a single performance result to CSV file."""
         current_dir = os.getcwd()
         if current_dir != '/app':
             os.chdir('/app')
@@ -111,60 +92,40 @@ class RunMethods:
                    f"{blocks_per_grid or 'N/A'}\n")
 
     def __create_results_file(self):
-        """Create results CSV file with appropriate headers if it doesn't exist."""
+        """Create results CSV file with appropriate headers."""
         if not os.path.exists(self.results_file):
             with open(self.results_file, 'w') as f:
                 f.write("timestamp,implementation,execution_time_ms,throughput_combinations_per_sec,threads_per_block,blocks_per_grid\n")
 
     def __run_cuda_profiling(self, cuda_path: str):
-        """
-        Run detailed CUDA profiling using nvprof.
-
-        Args:
-            cuda_path (str): Path to CUDA source files
-        """
-        print(f"{Style.BRIGHT}{Style.OKCYAN}Running CUDA profiling...{Style.RESET}")
+        """Run detailed CUDA profiling using nvprof."""
+        self.mensage.info("Running CUDA profiling...")
         
-        result = subprocess.run(f"ncu {cuda_path}/circuit_evaluator",
-                                shell=True, capture_output=True, text=True)
+        result = subprocess.run(f"ncu -c 1 {cuda_path}/circuit_evaluator",
+                              shell=True, capture_output=True, text=True)
         
-        # Save profiling output to file
-        print(f"{Style.BRIGHT}{Style.OKCYAN}Saving CUDA profiling results...{Style.RESET}")
         with open(f"{self.folder_path}/cuda/cuda_profiling.txt", 'w') as f:
             f.write(result.stdout)
         
         if self.debug:
             print(result.stdout)
-            print(f"{Style.BRIGHT}{Style.OKGREEN}CUDA profiling completed successfully!{Style.RESET}")
+        self.mensage.success("CUDA profiling completed successfully!")
 
     def __parse_cuda_output(self, output: str) -> float:
-        """
-        Parse CUDA output to extract execution time.
-
-        Args:
-            output (str): Output from CUDA execution
-
-        Returns:
-            float: Execution time in milliseconds
-        """
+        """Parse CUDA output to extract execution time."""
         lines = output.split('\n')
         for line in lines:
             if "Execution time" in line:
                 return float(line.split()[-2])
 
-        print(f"{Style.BRIGHT}{Style.FAIL}ERROR: Failed to parse CUDA execution time from output{Style.RESET}")
+        self.mensage.error("Failed to parse CUDA execution time from output")
         if self.debug:
-            print(f"{Style.WARNING}Raw output:{Style.RESET}\n{output}")
+            self.mensage.debug(f"Raw output:\n{output}")
         return 0
 
     def __print_analysis_results(self, implementations: dict):
-        """
-        Print comprehensive performance analysis for all implementations.
-
-        Args:
-            implementations (dict): Dictionary containing execution times and throughputs
-        """
-        print(f"{Style.BRIGHT}{Style.YELLOW}Performance analysis results:{Style.RESET}")
+        """Print comprehensive performance analysis."""
+        self.mensage.info("Performance analysis results:")
         for impl, data in implementations.items():
             times = data['times']
             throughputs = data['throughputs']
@@ -175,7 +136,7 @@ class RunMethods:
             max_time = max(times)
             max_throughput = max(throughputs)
 
-            print(f"{impl.upper()}:")
+            self.mensage.bold(f"{impl.upper()}:")
             print(f"  Average execution time: {avg_time:.3f} ms")
             print(f"  Average throughput: {avg_throughput:.2f} combinations/sec")
             print(f"  Min execution time: {min_time:.3f} ms")
@@ -183,162 +144,169 @@ class RunMethods:
             print(f"  Max execution time: {max_time:.3f} ms")
             print(f"  Max throughput: {max_throughput:.2f} combinations/sec")
 
-    def __calculate_throughput(self, execution_time: float,
-                               blocks_per_grid: int, 
-                               threads_per_block: int) -> float:
+    def __calculate_throughput(self, 
+                                execution_time: float,
+                                blocks_per_grid: int,
+                                threads_per_block: int,) -> dict:
         """
-        Calculate throughput using execution time and number of operations.
+        Calculate throughput with detailed operation metrics.
 
         Args:
-            execution_time (float): Execution time in milliseconds
+            execution_time (float): Total execution time in milliseconds
             blocks_per_grid (int): Number of blocks in CUDA grid
             threads_per_block (int): Number of threads per CUDA block
+            num_launches (int): Number of kernel launches
 
         Returns:
-            float: Throughput in combinations per second
+            dict: Comprehensive throughput metrics
         """
-        # 2025-02-01 16:57:30
-        # TODO - Validate the throughput calculation
+        # Total number of input combinations
+        total_combinations = 2 ** len(self.graph.inputs)
         
-        total_threads = threads_per_block * blocks_per_grid
-        total_operations = total_threads * self.graph.operations
-        throughput = total_operations / (execution_time / 1000) \
-            if execution_time > 0 else 0
+        # Total number of threads per launch
+        threads_per_launch = blocks_per_grid * threads_per_block
         
-        return throughput
+        # Total number of operations per combination
+        operations_per_combination = self.graph.operations
+        
+        # Total number of operations across all combinations
+        total_operations = total_combinations * operations_per_combination
+        
+        # Convert execution time to seconds
+        execution_time_seconds = execution_time / 1000.0
+        
+        # Calculate operations per second
+        operations_per_second = total_operations / execution_time_seconds \
+            if execution_time_seconds > 0 else 0
+        
+        if self.debug:
+            self.mensage.debug(f"Total combinations: {total_combinations}")
+            self.mensage.debug(f"Operations per combination: {operations_per_combination}")
+            self.mensage.debug(f"Total operations: {total_operations}")
+            self.mensage.debug(f"Execution time (ms): {execution_time}")
+            self.mensage.debug(f"Execution time (s): {execution_time_seconds}")
+            self.mensage.debug(f"Operations per second: {operations_per_second}")
+            self.mensage.debug(f"Threads per launch: {threads_per_launch}")
+        
+        return {
+            "total_combinations": total_combinations,
+            "operations_per_combination": operations_per_combination,
+            "total_operations": total_operations,
+            "execution_time_ms": execution_time,
+            "execution_time_seconds": execution_time_seconds,
+            "operations_per_second": operations_per_second,
+            "threads_per_launch": threads_per_launch
+        }
+    
+    #================#
+    # Public methods #
+    #================#
 
-    #====================#
-    # Public Methods     #
-    #====================#
 
-    def run_cuda(self, cuda_path: str, threads_per_block: int = 1024, 
-                blocks_per_grid: int = 1024*1024, num_runs: int = 10, 
+    def run_cuda(self, cuda_path: str, threads_per_block: int = 256, 
+                blocks_per_grid: int = 768, num_runs: int = 10, 
                 profile: bool = False):
-        """
-        Run and profile CUDA implementation.
-
-        Args:
-            cuda_path (str): Path to CUDA source files
-            threads_per_block (int, optional): Number of threads per block. Defaults to 1024.
-            blocks_per_grid (int, optional): Number of blocks in grid. Defaults to 1024*1024.
-            num_runs (int, optional): Number of test runs. Defaults to 10.
-            profile (bool, optional): Enable detailed CUDA profiling. Defaults to False.
-        """
-        print(f"{Style.BRIGHT}{Style.YELLOW}Initializing CUDA execution:{Style.RESET}")
-        print(f"{Style.OKCYAN}• Threads per block: {threads_per_block}")
-        print(f"• Blocks per grid: {blocks_per_grid}")
-        print(f"• Number of runs: {num_runs}{Style.RESET}")
+        """Run and profile CUDA implementation."""
+        self.mensage.info("Initializing CUDA execution:")
+        self.mensage.info(f"• Threads per block: {threads_per_block}")
+        self.mensage.info(f"• Blocks per grid: {blocks_per_grid}")
+        self.mensage.info(f"• Number of runs: {num_runs}")
 
         # Generate CUDA code
-        if self.debug:
-            print(f"{Style.OKCYAN}Generating CUDA code...{Style.RESET}")
+        if self.debug: self.mensage.debug("Generating CUDA code...")
         exe_path = f'{cuda_path}/circuit_evaluator.cu'
         cuda_gen = CudaGenerator(self.G)
-        exe_path = cuda_gen.run(exe_path, threads_per_block, blocks_per_grid)
+        exe_path = cuda_gen.run(exe_path, num_blocks=blocks_per_grid,
+                                num_threads=threads_per_block)
 
         # Compile CUDA code
-        if self.debug:
-            print(f"{Style.OKCYAN}Compiling CUDA code...{Style.RESET}")
+        if self.debug: self.mensage.debug("Compiling CUDA code...")
         compile_cmd = f"nvcc -lineinfo {exe_path} -o {cuda_path}/circuit_evaluator"
         try:
             subprocess.run(compile_cmd, shell=True, check=True)
         except subprocess.CalledProcessError:
-            print(f"{Style.BRIGHT}{Style.FAIL}ERROR: CUDA compilation failed!{Style.RESET}")
+            self.mensage.error("CUDA compilation failed!")
             raise
 
-        if profile or self.debug:
+        if profile:
             self.__run_cuda_profiling(cuda_path)
 
         # Run multiple times for averaging
-        print(f"{Style.BRIGHT}{Style.YELLOW}Starting performance runs:{Style.RESET}")
+        self.mensage.info("Starting performance runs:")
         for i in range(num_runs):
             try:
                 result = subprocess.run(f"{cuda_path}/circuit_evaluator", 
-                                    shell=True, 
-                                    capture_output=True, 
-                                    text=True)
+                                    shell=True, capture_output=True, text=True)
                 
                 if self.debug:
-                    print(f"{Style.OKCYAN}Run output:{Style.RESET}\n{result.stdout}")
+                    self.mensage.debug(f"Run output:\n")
+                    print(result.stdout)
+
                         
                 execution_time = self.__parse_cuda_output(result.stdout)
                 throughput = self.__calculate_throughput(execution_time,
                                                       blocks_per_grid, 
                                                       threads_per_block)
                 
-                self.__save_result("cuda", execution_time, throughput, 
+                self.__save_result("cuda", execution_time, throughput['operations_per_second'], 
                                 threads_per_block, blocks_per_grid)
                 
-                print(f"{Style.OKGREEN}Run {i+1}/{num_runs}: {execution_time:.3f} ms "
-                      f"(throughput: {throughput:.2f} combinations/sec){Style.RESET}")
+                self.mensage.success(f"Run {i+1}/{num_runs}: {execution_time:.3f} ms "
+                                  f"(throughput: {throughput['operations_per_second']:.2f} combinations/sec)")
 
             except Exception as e:
-                print(f"{Style.BRIGHT}{Style.FAIL}ERROR: Run {i+1} failed: {str(e)}{Style.RESET}")
+                self.mensage.error(f"Run {i+1} failed: {str(e)}")
 
-        print(f"{Style.BRIGHT}{Style.OKGREEN}✓ CUDA execution completed successfully!{Style.RESET}")
+        self.mensage.success("CUDA execution completed successfully!")
 
     def run_iverilog(self, verilog_path: str, exe_name: str, num_runs: int = 10):
-        """
-        Run and profile Iverilog implementation.
-
-        Args:
-            verilog_path (str): Path to Verilog source files
-            exe_name (str): Name for compiled executable
-            num_runs (int, optional): Number of test runs. Defaults to 10.
-        """
-        print(f"{Style.BRIGHT}{Style.YELLOW}Running Iverilog simulation...{Style.RESET}")
+        """Run and profile Iverilog implementation."""
+        self.mensage.info("Running Iverilog simulation...")
 
         # Compile Verilog
-        compile_cmd = f"iverilog -o {verilog_path}/{exe_name} {verilog_path}/somador.v {verilog_path}/tb_somador.v"
+        compile_cmd = f"iverilog -o {verilog_path}/{exe_name} {verilog_path}/somador.v {verilog_path}/testbench.v"
         subprocess.run(compile_cmd, shell=True, check=True)
 
         for i in range(num_runs):
             start_time = time.time()
-            result = subprocess.run(f"vvp {verilog_path}/{exe_name}",shell=True, 
-                                    capture_output=True, 
-                                    text=True)
+            result = subprocess.run(f"vvp {verilog_path}/{exe_name}", 
+                                 shell=True, capture_output=True, text=True)
             execution_time = (time.time() - start_time) * 1000
 
             if self.debug:
-                print(f"{Style.OKCYAN}Run output:{Style.RESET}\n{result.stdout}")
+                self.mensage.debug(f"Run output:\n")
+                print(result.stdout)
 
-            # 2025-02-01 13:22:10
-            # thorughput = (number of combinations) / execution_time
             num_of_combinations = 2**len(self.graph.inputs)
             throughput = num_of_combinations / (execution_time / 1000) if execution_time > 0 else 0
             self.__save_result("iverilog", execution_time, throughput)
             
-            print(f"{Style.OKGREEN}Run {i+1}/{num_runs}: {execution_time:.3f} ms "
-                  f"(throughput: {throughput:.2f} combinations/sec){Style.RESET}")
+            self.mensage.success(f"Run {i+1}/{num_runs}: {execution_time:.3f} ms "
+                              f"(throughput: {throughput:.2f} combinations/sec)")
 
-        print(f"{Style.BRIGHT}{Style.OKGREEN}✓ Iverilog execution completed successfully!{Style.RESET}")
+        self.mensage.success("Iverilog execution completed successfully!")
 
-    
     def run_verilator(self, verilator_path: str, num_runs: int = 10):
-        """Run Verilator implementation with enhanced error handling"""
-        print(f"{Style.BRIGHT}{Style.YELLOW}Initializing Verilator simulation...{Style.RESET}")
+        """Run Verilator implementation."""
+        self.mensage.info("Initializing Verilator simulation...")
 
-        if self.debug:
-            print(f"{Style.OKCYAN}Copying Verilog files to verilator directory...{Style.RESET}")
+        if self.debug: self.mensage.debug("Copying Verilog files to verilator directory...")
         os.system(f"cp {self.folder_path}/verilog/*.v {verilator_path}/")
 
         current_dir = os.getcwd()
         os.chdir(verilator_path)
 
         try:
-            if self.debug:
-                print(f"{Style.OKCYAN}Compiling with Verilator...{Style.RESET}")
-            compile_cmd = "verilator -D -CFLAGS -fcoroutines --cc --main --build --exe --timing --trace --top-module tb_top *.v"
+            if self.debug: self.mensage.debug("Compiling with Verilator...")
+            compile_cmd = "verilator -D -CFLAGS -fcoroutines --cc --main --build --exe --timing --trace -sv --top-module tb_top testbench.v somador.v"
             result = subprocess.run(compile_cmd, capture_output=True, shell=True, check=True)
             
-            print(f"{Style.BRIGHT}{Style.YELLOW}Starting performance runs:{Style.RESET}")
+            self.mensage.info("Starting performance runs:")
             for i in range(num_runs):
                 try:
                     start_time = time.time()
                     result = subprocess.run("./obj_dir/Vtb_top", 
-                                        shell=True,
-                                        capture_output=True,
-                                        text=True)
+                                        shell=True, capture_output=True, text=True)
                     
                     execution_time = (time.time() - start_time) * 1000
                     num_of_combinations = 2**len(self.graph.inputs)
@@ -346,29 +314,27 @@ class RunMethods:
                     
                     self.__save_result("verilator", execution_time, throughput)
                     
-                    print(f"{Style.OKGREEN}Run {i+1}/{num_runs}: {execution_time:.3f} ms "
-                          f"(throughput: {throughput:.2f} combinations/sec){Style.RESET}")
+                    self.mensage.success(f"Run {i+1}/{num_runs}: {execution_time:.3f} ms "
+                                      f"(throughput: {throughput:.2f} combinations/sec)")
 
                     if self.debug:
-                        print(f"{Style.OKCYAN}Run output:{Style.RESET}\n{result.stdout}")
+                        self.mensage.debug(f"Run output:\n")
+                        print(result.stdout)
+
 
                 except Exception as e:
-                    print(f"{Style.BRIGHT}{Style.FAIL}ERROR: Run {i+1} failed: {str(e)}{Style.RESET}")
+                    self.mensage.error(f"Run {i+1} failed: {str(e)}")
 
         except subprocess.CalledProcessError as e:
-            print(f"{Style.BRIGHT}{Style.FAIL}ERROR: Verilator compilation failed!")
-            print(f"Details: {str(e)}{Style.RESET}")
+            self.mensage.error(f"Verilator compilation failed! Details: {str(e)}")
             raise
         finally:
             os.chdir(current_dir)
 
-        print(f"{Style.BRIGHT}{Style.OKGREEN}✓ Verilator execution completed successfully!{Style.RESET}")
+        self.mensage.success("Verilator execution completed successfully!")
 
     def analyze_results(self):
-        """
-        Analyze and print comprehensive performance statistics for all implementations.
-        Calculates average, minimum, and maximum execution times and throughput.
-        """
+        """Analyze and print comprehensive performance statistics."""
         with open(self.results_file, 'r') as f:
             reader = csv.DictReader(f)
             results = list(reader)
@@ -389,15 +355,7 @@ class RunMethods:
 
     def run_all(self, threads_per_block: int = 1024, blocks_per_grid: int = 1024, 
                 num_runs: int = 10, profile: bool = False):
-        """
-        Run all implementations with specified parameters.
-
-        Args:
-            threads_per_block (int, optional): CUDA threads per block. Defaults to 1024.
-            blocks_per_grid (int, optional): CUDA blocks per grid. Defaults to 1024*1024.
-            num_runs (int, optional): Number of test runs. Defaults to 10.
-            profile (bool, optional): Enable CUDA profiling. Defaults to False.
-        """
+        """Run all implementations with specified parameters."""
         self.run_cuda(f'{self.folder_path}/cuda', threads_per_block, blocks_per_grid, 
                      num_runs, profile)
         self.run_iverilog(f'{self.folder_path}/verilog', 'verilog', num_runs)

@@ -153,12 +153,12 @@ alias recadd3     "st; rec_add3; b; rec_add3; dc2; rec_add3; if -K 8; bidec; st;
 #-----------------------------------------------------#
 
 # Lê a tabela verdade
-rp {{ pla_file }}
+rl {{ blif_file }}
 
 # Loop para otimizações
-{% for otimization in otimizations %}
-{{ otimization }}; ps;
-{% endfor %}
+# {% for otimization in otimizations %}
+# {{ otimization }}; ps;
+# {% endfor %}
 
 # Transforma em AIG
 strash;
@@ -178,5 +178,5 @@ write_verilog {{ verilog_output }};
 # Gera representação gráfica
 write_dot {{ dot_output }};
 
-# Gera BLIF
-write_blif {{ blif_output }};
+# Gera blif
+write_blif {{blif_output}}
