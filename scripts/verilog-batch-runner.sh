@@ -20,10 +20,43 @@ print_usage() {
     echo "  --cuda-threads    CUDA threads per block (default: 256)"
     echo "  --cuda-blocks     CUDA blocks per grid (default: 768)"
     echo "  --method          Specify the method to use for simulation"
+    echo "  --timeout         Set timeout in seconds (default: 3600, 0 for no timeout)"
     echo "  --profile         Enable CUDA profiling"
     echo "  --debug           Enable debug output"
     echo "  -h, --help        Display this help message"
 }
+
+# Function to cleanup processes and files
+cleanup() {
+    local pids_to_kill=("$@")
+    echo -e "\nCleaning up processes..."
+    
+    # Kill the entire process group to ensure all child processes are terminated
+    if [ ${#pids_to_kill[@]} -gt 0 ]; then
+        for pid in "${pids_to_kill[@]}"; do
+            if ps -p "$pid" > /dev/null; then
+                # Kill the process group
+                pkill -TERM -P "$pid" 2>/dev/null
+                kill -TERM -"$pid" 2>/dev/null
+                kill -TERM "$pid" 2>/dev/null
+            fi
+        done
+    fi
+
+    # Remove temporary script if it exists
+    [ -f "$temp_script" ] && rm "$temp_script"
+}
+
+# Function to handle Ctrl+C
+handle_interrupt() {
+    echo -e "\nReceived interrupt signal."
+    cleanup "${current_pids[@]}"
+    echo "Script terminated by user"
+    exit 130
+}
+
+# Set up trap for Ctrl+C and SIGTERM
+trap handle_interrupt SIGINT SIGTERM
 
 # Function to check if python script exists
 check_python_script() {
@@ -64,16 +97,28 @@ process_file() {
     
     chmod +x "$temp_script"
     
-    # Run with timeout of 1 hour (3600 seconds)
-    timeout 3600 bash "$temp_script"
+    # Run with or without timeout based on TIMEOUT_VALUE
+    if [ "$TIMEOUT_VALUE" -gt 0 ]; then
+        timeout "$TIMEOUT_VALUE" setsid bash "$temp_script" &
+    else
+        setsid bash "$temp_script" &
+    fi
+    
+    local current_pid=$!
+    current_pids+=($current_pid)
+    
+    wait $current_pid
     local result=$?
+    
+    # Remove the PID from the array
+    current_pids=("${current_pids[@]/$current_pid}")
     
     # Clean up temporary script
     rm "$temp_script"
     
     # Check timeout result
     if [ $result -eq 124 ]; then
-        echo "Process timed out after 1 hour"
+        echo "Process timed out after $TIMEOUT_VALUE seconds"
         return 1
     else
         return $result
@@ -88,8 +133,10 @@ NUM_RUNS=10
 NUM_LUTS=5
 CUDA_THREADS=256
 CUDA_BLOCKS=768
+TIMEOUT_VALUE=3600
 PROFILE=""
 DEBUG=""
+declare -a current_pids=()
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -124,6 +171,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --method)
             METHOD="$2"
+            shift 2
+            ;;
+        --timeout)
+            TIMEOUT_VALUE="$2"
             shift 2
             ;;
         --profile)
@@ -185,7 +236,11 @@ for vfile in $VERILOG_FILES; do
     current_test_name="${TEST_NAME}_${MODULE_NAME}"
     
     echo "Using module name: $MODULE_NAME"
-    echo "Starting process (1 hour timeout)..."
+    if [ "$TIMEOUT_VALUE" -gt 0 ]; then
+        echo "Starting process ($TIMEOUT_VALUE seconds timeout)..."
+    else
+        echo "Starting process (no timeout)..."
+    fi
     
     # Process file with timeout
     if process_file "$vfile" "$MODULE_NAME" "$current_test_name"; then
