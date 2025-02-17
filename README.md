@@ -1,46 +1,115 @@
-# LUT2GPU
+# GO FAST
 
-This project aim to get a LUT graph and convert it to cuda code to be executed on GPU.
-With this, we can get a fast LUT evaluation, compared to Icarus Verilog simulation.
-The final goal is to use this LUT to pruning a neural network LUT graph using machine learning 
-and heuristic algorithms.
+A project that converts LUT (Look-Up Table) graphs into CUDA code for GPU execution, enabling faster circuit evaluation compared to Icarus Verilog simulation. This project aims to optimize neural network LUT graphs using machine learning and heuristic algorithms.
 
+## Prerequisites
 
-## How to install
+- Docker
+- NVIDIA Container Toolkit
+- CUDA-capable GPU
+- SSH access to development environment
 
-To install the project, run the following command in the ssh environment:
+## Installation
 
+1. Clone the repository and navigate to project directory:
 ```bash
+git clone <repository-url>
 cd LUT2GPU
+```
+
+2. Run the installation script:
+```bash
 ./install.sh
 ```
 
-The script will set the permissions of the `run.sh` script to allow execution. And will install de docker image with the necessary dependencies.
+The script performs:
+- Script permission configuration
+- Docker image installation with dependencies
+- CUDA environment setup
 
-## How to use
+## Usage
 
-To run the project, run the following command in the ssh environment:
+### Starting the Environment
 
+Launch the project environment:
 ```bash
-cd LUT2GPU
 ./run.sh
 ```
 
-To access the jupyter notebook, open a web browser and go to the **address shown in the terminal**.
+This will:
+- Initialize Docker container
+- Set up project directories
+- Start Jupyter server
+- Display access URL in terminal
 
-To stop the project, press `Ctrl+C` in the terminal.
+### Available Scripts
 
+#### Verilog Batch Processing
+```bash
+./scripts/verilog-batch-runner.sh -d <input-directory> [options]
+```
+Options:
+- `--cuda`: Run CUDA simulation
+- `--iverilog`: Run Icarus Verilog simulation
+- `--all`: Run all simulations
+- `--timeout <seconds>`: Set execution timeout
 
-## Folder structure
+#### Ripple Adder Testing
+```bash
+./scripts/ripple-adder-test-script.sh [options]
+```
+Options:
+- `--min-bits`: Minimum bits for testing
+- `--max-bits`: Maximum bits for testing
+- `--threads`: Threads per block
+- `--blocks`: Blocks per grid
 
-- misc: Miscellaneous files. Like docs, papers, etc.
-- src: Source code of the project.
-- tests: Test files for the project.
-- notebooks: Jupyter notebooks for the project.
-- scripts: Scripts for the project, like ABC and yosys scripts.
+## Project Structure
 
-## Acknowledgements
+```
+LUT2GPU/
+├── misc/               # Documentation and resources
+├── src/               # Source code
+│   ├── codegen/      # CUDA generation tools
+│   ├── graph/        # LUT graph handlers
+│   └── ml/          # ML components
+├── tests/            # Test files
+├── notebooks/        # Jupyter notebooks
+└── scripts/          # Utility scripts
+```
+
+## Core Components
+
+1. **CUDA Generator** (`src/lut2graph.py`):
+   - Optimized CUDA code generation
+   - 64-bit data type support
+   - Multi-point parallel processing
+
+2. **Execution Scripts** (`src/utils/runScripts.py`):
+   - Yosys/ABC workflow management
+   - Template-based script generation
+   - Verilog to BLIF conversion
+
+## Testing
+
+Run the test suite:
+```bash
+./run_tests.sh
+```
+
+## Troubleshooting
+
+Common issues:
+- CUDA not found: Verify NVIDIA driver installation
+- Docker permission denied: Add user to docker group
+- Jupyter connection failed: Check port availability
+
+## License
+
+MIT License - see LICENSE file
 
 ## TODO
 
-
+- [ ] Add benchmark results
+- [ ] Expand documentation
+- [ ] Implement more optimization algorithms
