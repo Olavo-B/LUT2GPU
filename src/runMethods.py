@@ -169,7 +169,7 @@ class RunMethods:
         # Total number of input combinations
         # 2025-02-07 11:13:00
         # The total combinations is limited to 40 to avoid overflow
-        total_combinations = 2 ** len(self.graph.inputs) if len(self.graph.inputs) < 40 else 2 ** 40
+        total_combinations = 2 ** len(self.graph.inputs) if len(self.graph.inputs) < 30 else 2 ** 30
         
         # Total number of threads per launch
         threads_per_launch = blocks_per_grid * threads_per_block

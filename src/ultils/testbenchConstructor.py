@@ -107,39 +107,25 @@ class VerilogTestbenchGenerator:
             self.mensage.error(f"Error parsing Verilog module: {str(e)}")
             raise
         
-    def generate_basic_testbench(self) -> str:
+    def generate_basic_testbench(self, method:str = 'limited') -> str:
         """
         Generate a basic Verilog testbench using grouped inputs from counters.
+
+        Parameters:
+            method (str): 
+                Testbench generation method (default: 'limited'). 
+                Options: 'grouped', 'limited'
+
+                Limited: Generate testbench with limited input combinations(2^30)
+                Grouped: Generate testbench with grouped inputs from counters
+
+        Returns:
+            str: Verilog testbench content
         """
-        GROUP_SIZE = min(30, len(self.inputs))  # Size of each group (8 bits = 256 combinations)
-        input_count = len(self.inputs)
-        num_groups = math.ceil((input_count) / GROUP_SIZE)  # Ceiling division
-        
-        # Generate the counter assignments for each group
-        counter_assignments = []
-        loop_limits = {}
-        for group in range(num_groups):
-            start_idx = group * GROUP_SIZE
-            end_idx = min((group + 1) * GROUP_SIZE, input_count)
-            
-            assignments = []
-            loop_limits[group] = 0
-            for i, input_name in enumerate(self.inputs[start_idx:end_idx]):
-                loop_limits[group] = i
-                assignments.append(f"                {input_name} = counter_{group}[{i}];\n")
-            counter_assignments.extend(assignments)
 
-        if self.debug: self.mensage.debug(f"Loop limits: {loop_limits}")
-        
-        loop_assignments = []
-        for group in range(num_groups):
-            loop_assignments.append(f"for (counter_{group} = 0; counter_{group} < {2**(loop_limits[group]+1)}; counter_{group} = counter_{group} + 1) begin")
+        # Number of groups
 
-
-        if self.debug:
-            self.mensage.debug(f"loop_assignments: {loop_assignments}")
-            self.mensage.debug(f"Generated {num_groups} groups of {GROUP_SIZE} inputs each")
-
+       
         testbench_template = f"""/*
     * Testbench for {self.dut_name}
     * Generated automatically
@@ -155,7 +141,7 @@ class VerilogTestbenchGenerator:
         integer tests_run = 0;
         
         // Group counters
-        {"    ".join([f"integer counter_{i};\n" for i in range(num_groups)])}
+        {"    ".join([f"integer counter_{i};\n" for i in range(self.__generate_grouped_test_cases()[0])]) if method == 'grouped' else "integer test_index;\n"}
 
         // Device Under Test (DUT) instantiation
         {self.dut_name} dut(
@@ -166,25 +152,7 @@ class VerilogTestbenchGenerator:
         initial begin
             $display("Starting grouped input test for {self.dut_name}");
             
-            
-                {"\n            ".join(loop_assignments)}
-                    
-                    // Assign inputs from counters
-    {"".join(counter_assignments)}
-                    
-                    // Allow signals to propagate
-                    #1;
-                    
-                    // Track test execution
-                    tests_run = tests_run + 1;
-                    
-                    // Add verification logic here
-                    // Example:
-                    // if (output_doesnt_match_expected)
-                    //     errors = errors + 1;
-                    
-                {"end\n            ".join(["" for _ in range(num_groups)])}
-            end
+            {"\n".join([self.__generate_grouped_test_cases()[1]]) if method == 'grouped' else "\n".join([self._generate_exhaustive_test_cases()])}
 
             // Test summary
             $display("Test Summary:");
@@ -230,7 +198,69 @@ class VerilogTestbenchGenerator:
         for output_port in self.outputs:
             port_mappings.append(f"        .{output_port}({output_port})")
         return ",\n".join(port_mappings)
+    
+    def __generate_grouped_test_cases(self) -> str:
+        """
+        Generate grouped test cases using counters for input combinations.
 
+        Returns:
+            int: Number of groups
+            str: Verilog test case generation code
+        """
+
+        GROUP_SIZE = min(30, len(self.inputs))  # Size of each group (8 bits = 256 combinations)
+        input_count = len(self.inputs)
+        num_groups = math.ceil((input_count) / GROUP_SIZE)  # Ceiling division
+        
+        # Generate the counter assignments for each group
+        counter_assignments = []
+        loop_limits = {}
+        for group in range(num_groups):
+            start_idx = group * GROUP_SIZE
+            end_idx = min((group + 1) * GROUP_SIZE, input_count)
+            
+            assignments = []
+            loop_limits[group] = 0
+            for i, input_name in enumerate(self.inputs[start_idx:end_idx]):
+                loop_limits[group] = i
+                assignments.append(f"                {input_name} = counter_{group}[{i}];\n")
+            counter_assignments.extend(assignments)
+
+        if self.debug: self.mensage.debug(f"Loop limits: {loop_limits}")
+        
+        loop_assignments = []
+        for group in range(num_groups):
+            loop_assignments.append(f"for (counter_{group} = 0; counter_{group} < {2**(loop_limits[group]+1)}; counter_{group} = counter_{group} + 1) begin")
+
+
+        if self.debug:
+            self.mensage.debug(f"loop_assignments: {loop_assignments}")
+            self.mensage.debug(f"Generated {num_groups} groups of {GROUP_SIZE} inputs each")
+
+        # Generate test cases
+        test_cases = f"""    
+        
+        {"\n            ".join(loop_assignments)}
+                    
+                    // Assign inputs from counters
+    {"".join(counter_assignments)}
+                    
+                    // Allow signals to propagate
+                    #1;
+                    
+                    // Track test execution
+                    tests_run = tests_run + 1;
+                    
+                    // Add verification logic here
+                    // Example:
+                    // if (output_doesnt_match_expected)
+                    //     errors = errors + 1;
+                    
+                {"end\n            ".join(["" for _ in range(num_groups)])}
+            end"""
+
+        return num_groups,test_cases
+    
     def _generate_exhaustive_test_cases(self) -> str:
         """
         Generate exhaustive test cases for all possible input combinations.
@@ -246,7 +276,7 @@ class VerilogTestbenchGenerator:
         # Generate all possible binary combinations
         def generate_combinations(num_inputs):
             if self.debug: self.mensage.debug(f"Generating all possible combinations for {num_inputs} inputs")
-            return 2 ** num_inputs
+            return 2 ** num_inputs if num_inputs <= 30 else 2 ** 30
 
         # Generate total input combinations
         input_combinations = generate_combinations(len(self.inputs))
@@ -257,15 +287,16 @@ class VerilogTestbenchGenerator:
         # Nested loops or direct generation of all combinations
         test_cases.append("        // Test every possible input combination")
         
-        # Begin test loop
-        test_cases.append("        begin")
-        
+
         # Variables for iteration
         test_cases.append(f"            for (test_index = 0; test_index < {input_combinations}; test_index = test_index + 1) begin")
         
         # Assign inputs based on combination
         for i, input_port in enumerate(self.inputs):
-            test_cases.append(f"                {input_port} = test_index[{i}];")
+            if i >= 29:
+                test_cases.append(f"                {input_port} = 0;")
+            else:
+                test_cases.append(f"                {input_port} = test_index[{i}];")
         
         # Test tracking and delay
         test_cases.extend([
@@ -279,7 +310,6 @@ class VerilogTestbenchGenerator:
         
         # Close loops
         test_cases.append("            end")
-        test_cases.append("        end")
 
         return "\n".join(test_cases)
 
