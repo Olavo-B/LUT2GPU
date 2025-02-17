@@ -34,7 +34,7 @@ def main():
                         required=True, 
                         help='Path to the input Verilog file')
     
-    parser.add_argument('-m', '--module', 
+    parser.add_argument('-t', '--top-module', '--top', 
                         type=str, 
                         required=True, 
                         help='Top-level module name in the Verilog file')
@@ -64,6 +64,11 @@ def main():
                         default=10, 
                         help='Number of performance test runs (default: 10)')
     
+    parser.add_argument('--lut-size',
+                        type=int,
+                        default=5,
+                        help='LUT size for the FPGA (default: 5)')
+    
     parser.add_argument('--cuda-threads', 
                         type=int, 
                         default=256, 
@@ -81,6 +86,11 @@ def main():
     parser.add_argument('--debug', 
                         action='store_true', 
                         help='Enable debug output')
+    
+    parser.add_argument('--method', '-m', 
+                        type=str, 
+                        default='1_point', 
+                        help='Method to run (default: 1_point)')
 
     # Parse arguments
     args = parser.parse_args()
@@ -112,8 +122,8 @@ def main():
     script_runner = RunScripts(
         path=PATH,
         verilog_path=f'{os.path.basename(args.verilog)}', 
-        top_module=args.module,
-        args={'otimizations': ["resyn3", 'resyn'], 'lut_k': 5},
+        top_module=args.top_module,
+        args={'otimizations': ["resyn3", 'resyn'], 'lut_k': args.lut_size},
         debug=args.debug
     ).run() 
 
@@ -137,17 +147,18 @@ def main():
                 cuda_path=f'{base_path}/cuda', 
                 threads_per_block=args.cuda_threads, 
                 blocks_per_grid=args.cuda_blocks, 
-                num_runs=args.num_runs, 
+                num_runs=args.num_runs,
+                method=args.method, 
                 profile=args.profile
             )
         
-        if 'iverilog' in run_modes:
-            print("\n🧩 Running Icarus Verilog Simulation:")
-            runner.run_iverilog(
-                verilog_path=f'{base_path}/verilog', 
-                exe_name='circuit', 
-                num_runs=args.num_runs
-            )
+        # if 'iverilog' in run_modes:
+        #     print("\n🧩 Running Icarus Verilog Simulation:")
+        #     runner.run_iverilog(
+        #         verilog_path=f'{base_path}/verilog', 
+        #         exe_name='circuit', 
+        #         num_runs=args.num_runs
+        #     )
         
         if 'verilator' in run_modes:
             print("\n🔬 Running Verilator Simulation:")
