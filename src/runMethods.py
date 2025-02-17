@@ -75,7 +75,8 @@ class RunMethods:
         return base_path
 
     def __save_result(self, implementation: str, execution_time: float, 
-                     throughput: float, threads_per_block: int = None, 
+                     throughput: float, num_operations: float = None, 
+                     launches: int = None, threads_per_block: int = None, 
                      blocks_per_grid: int = None):
         """Save a single performance result to CSV file."""
         current_dir = os.getcwd()
@@ -87,15 +88,19 @@ class RunMethods:
 
         with open(self.results_file, 'a') as f:
             timestamp = datetime.now().timestamp()
-            f.write(f"{timestamp},{implementation},{execution_time:.3f},"
-                   f"{throughput:.2f},{threads_per_block or 'N/A'},"
+            f.write(f"{timestamp},{len(self.graph.inputs)},{len(self.graph.outputs)},"
+                   f"{implementation},{execution_time:.3f},"
+                   f"{throughput:.2f},{num_operations or 'N/A'},"
+                   f"{launches or 'N/A'},{threads_per_block or 'N/A'},"
                    f"{blocks_per_grid or 'N/A'}\n")
 
     def __create_results_file(self):
         """Create results CSV file with appropriate headers."""
         if not os.path.exists(self.results_file):
             with open(self.results_file, 'w') as f:
-                f.write("timestamp,implementation,execution_time_ms,throughput_combinations_per_sec,threads_per_block,blocks_per_grid\n")
+                f.write("timestamp,input_size,output_size,implementation,execution_time_ms,"
+                        "throughput_combinations_per_sec,number_of_operations,launches,"
+                        "threads_per_block,blocks_per_grid\n")
 
     def __run_cuda_profiling(self, cuda_path: str):
         """Run detailed CUDA profiling using nvprof."""
@@ -147,7 +152,8 @@ class RunMethods:
     def __calculate_throughput(self, 
                                 execution_time: float,
                                 blocks_per_grid: int,
-                                threads_per_block: int,) -> dict:
+                                threads_per_block: int,
+                                points_per_thread: int = 1) -> dict:
         """
         Calculate throughput with detailed operation metrics.
 
@@ -155,13 +161,15 @@ class RunMethods:
             execution_time (float): Total execution time in milliseconds
             blocks_per_grid (int): Number of blocks in CUDA grid
             threads_per_block (int): Number of threads per CUDA block
-            num_launches (int): Number of kernel launches
+            points_per_thread (int, optional): Number of points per thread. Defaults to 1.
 
         Returns:
             dict: Comprehensive throughput metrics
         """
         # Total number of input combinations
-        total_combinations = 2 ** len(self.graph.inputs)
+        # 2025-02-07 11:13:00
+        # The total combinations is limited to 40 to avoid overflow
+        total_combinations = 2 ** len(self.graph.inputs) if len(self.graph.inputs) < 40 else 2 ** 40
         
         # Total number of threads per launch
         threads_per_launch = blocks_per_grid * threads_per_block
@@ -178,6 +186,12 @@ class RunMethods:
         # Calculate operations per second
         operations_per_second = total_operations / execution_time_seconds \
             if execution_time_seconds > 0 else 0
+
+        # Calculate number of launches
+        if points_per_thread > 1:
+            numLaunches = (total_combinations + (points_per_thread * threads_per_launch) - 1) / (points_per_thread * threads_per_launch)
+        else:
+            numLaunches = (total_combinations + threads_per_launch - 1) / threads_per_launch;
         
         if self.debug:
             self.mensage.debug(f"Total combinations: {total_combinations}")
@@ -187,6 +201,7 @@ class RunMethods:
             self.mensage.debug(f"Execution time (s): {execution_time_seconds}")
             self.mensage.debug(f"Operations per second: {operations_per_second}")
             self.mensage.debug(f"Threads per launch: {threads_per_launch}")
+            self.mensage.debug(f"Number of launches: {numLaunches}")
         
         return {
             "total_combinations": total_combinations,
@@ -195,7 +210,8 @@ class RunMethods:
             "execution_time_ms": execution_time,
             "execution_time_seconds": execution_time_seconds,
             "operations_per_second": operations_per_second,
-            "threads_per_launch": threads_per_launch
+            "threads_per_launch": threads_per_launch,
+            "numLaunches": numLaunches
         }
     
     #================#
@@ -204,8 +220,8 @@ class RunMethods:
 
 
     def run_cuda(self, cuda_path: str, threads_per_block: int = 256, 
-                blocks_per_grid: int = 768, num_runs: int = 10, 
-                profile: bool = False):
+                blocks_per_grid: int = 768, num_runs: int = 10,
+                method: str = '1_point', profile: bool = False):
         """Run and profile CUDA implementation."""
         self.mensage.info("Initializing CUDA execution:")
         self.mensage.info(f"• Threads per block: {threads_per_block}")
@@ -216,8 +232,10 @@ class RunMethods:
         if self.debug: self.mensage.debug("Generating CUDA code...")
         exe_path = f'{cuda_path}/circuit_evaluator.cu'
         cuda_gen = CudaGenerator(self.G)
-        exe_path = cuda_gen.run(exe_path, num_blocks=blocks_per_grid,
-                                num_threads=threads_per_block)
+        exe_path = cuda_gen.run(exe_path, method=method, 
+                                num_blocks=blocks_per_grid,
+                                num_threads=threads_per_block,
+                                poins_per_thread=4000)
 
         # Compile CUDA code
         if self.debug: self.mensage.debug("Compiling CUDA code...")
@@ -248,7 +266,10 @@ class RunMethods:
                                                       blocks_per_grid, 
                                                       threads_per_block)
                 
-                self.__save_result("cuda", execution_time, throughput['operations_per_second'], 
+                self.__save_result("cuda", execution_time, 
+                                throughput['operations_per_second'],
+                                throughput['operations_per_combination'], 
+                                throughput['numLaunches'], 
                                 threads_per_block, blocks_per_grid)
                 
                 self.mensage.success(f"Run {i+1}/{num_runs}: {execution_time:.3f} ms "
@@ -298,7 +319,12 @@ class RunMethods:
 
         try:
             if self.debug: self.mensage.debug("Compiling with Verilator...")
-            compile_cmd = "verilator -D -CFLAGS -fcoroutines --cc --main --build --exe --timing --trace -sv --top-module tb_top testbench.v somador.v"
+            n_threads = os.cpu_count()
+            self.mensage.info(f"Using {n_threads} threads for compilation")
+            compile_cmd = ("verilator -D -CFLAGS -fcoroutines --cc --main" + 
+                           " --build --exe --timing -j 0 --trace -sv " +
+                           "--threads " + str(n_threads) + " -Wno-fatal " + 
+                           "-O3 --top-module tb_top testbench.v somador.v")
             result = subprocess.run(compile_cmd, capture_output=True, shell=True, check=True)
             
             self.mensage.info("Starting performance runs:")

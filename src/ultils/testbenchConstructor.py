@@ -10,7 +10,10 @@
 
 import os
 import re
+import math
 from itertools import product
+
+
 from src.ultils.style import Mensage
 
 class VerilogTestbenchGenerator:
@@ -110,20 +113,31 @@ class VerilogTestbenchGenerator:
         """
         GROUP_SIZE = min(30, len(self.inputs))  # Size of each group (8 bits = 256 combinations)
         input_count = len(self.inputs)
-        num_groups = (input_count + GROUP_SIZE) // GROUP_SIZE  # Ceiling division
+        num_groups = math.ceil((input_count) / GROUP_SIZE)  # Ceiling division
         
         # Generate the counter assignments for each group
         counter_assignments = []
+        loop_limits = {}
         for group in range(num_groups):
             start_idx = group * GROUP_SIZE
             end_idx = min((group + 1) * GROUP_SIZE, input_count)
             
             assignments = []
+            loop_limits[group] = 0
             for i, input_name in enumerate(self.inputs[start_idx:end_idx]):
+                loop_limits[group] = i
                 assignments.append(f"                {input_name} = counter_{group}[{i}];\n")
             counter_assignments.extend(assignments)
 
+        if self.debug: self.mensage.debug(f"Loop limits: {loop_limits}")
+        
+        loop_assignments = []
+        for group in range(num_groups):
+            loop_assignments.append(f"for (counter_{group} = 0; counter_{group} < {2**(loop_limits[group]+1)}; counter_{group} = counter_{group} + 1) begin")
+
+
         if self.debug:
+            self.mensage.debug(f"loop_assignments: {loop_assignments}")
             self.mensage.debug(f"Generated {num_groups} groups of {GROUP_SIZE} inputs each")
 
         testbench_template = f"""/*
@@ -153,8 +167,7 @@ class VerilogTestbenchGenerator:
             $display("Starting grouped input test for {self.dut_name}");
             
             
-                {"".join([f'''
-                for (counter_{i} = 0; counter_{i} < {2**GROUP_SIZE}; counter_{i} = counter_{i} + 1) begin''' for i in range(num_groups)])}
+                {"\n            ".join(loop_assignments)}
                     
                     // Assign inputs from counters
     {"".join(counter_assignments)}

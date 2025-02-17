@@ -16,7 +16,7 @@ import os
 import re
 
 
-from src.ultils.style import Style
+from src.ultils.style import Style, Mensage
 
 
 class Graph():
@@ -353,17 +353,25 @@ class CudaGenerator():
     """
     def __init__(self, graph:nx.DiGraph):
         self.G = graph
-
-        # Count inputs and outputs
         self.inputs = [node for node, data in self.G.nodes(data=True) if data.get('type') == 'input']
         self.outputs = [node for node, data in self.G.nodes(data=True) if data.get('type') == 'output']
         self.num_inputs = len(self.inputs)
         self.num_outputs = len(self.outputs)
-        
-        # Get nodes in topological order
-        self.ordered_nodes = list(nx.topological_sort(self.G))
 
+        self.ordered_nodes = list(nx.topological_sort(self.G))
         self.cuda_code = ""
+        
+        # Calculate effective number of inputs (limited to 64 bits)
+        self.effective_inputs = min(self.num_inputs, 40)
+        # Calculate effective number of outputs (limited to 64 bits)
+        self.effective_outputs = min(self.num_outputs, 40)
+        self.mensage = Mensage()
+        
+        if self.num_inputs > 64:
+            self.mensage.warning(f"Number of inputs ({self.num_inputs}) exceeds 64 bits. Only using least significant 64 bits.")
+        if self.num_outputs > 64:
+            self.mensage.warning(f"Number of outputs ({self.num_outputs}) exceeds 64 bits. Only storing least significant 64 bits.")
+
     
     def __str__(self):
         return self.cuda_code
@@ -383,18 +391,7 @@ class CudaGenerator():
     #====================#
     
     def __generate_cuda_header(self) -> None:
-        """
-        Create the header for the CUDA code.
-
-        Args:
-        ------
-        - None
-
-        Returns:
-        ------
-        - None
-        """
-            
+        """Original header generation method with 64-bit types"""
         self.cuda_code = """
 #include <stdio.h>
 #include <cuda_runtime.h>
@@ -409,6 +406,147 @@ class CudaGenerator():
     } \\
 }
         """
+    def __generate_variable_declarations(self) -> str:
+        """Generate variable declarations using unsigned long long for large circuits"""
+        code = "\n        // Initialize all variables\n"
+        all_nodes = set(self.G.nodes())
+        for node in all_nodes:
+            code += f"    unsigned long long {node} = 0;\n"
+        return code
+
+    def __generate_input_assignments(self) -> str:
+        """Generate input assignments limited to 64 bits"""
+        code = "\n        // Set input values\n"
+        for i, input_var in enumerate(reversed(self.inputs[:self.effective_inputs])):
+            code += f"        {input_var} = (x >> {i}) & 1ULL;\n"
+        # Set remaining inputs to 0
+        for input_var in reversed(self.inputs[self.effective_inputs:]):
+            code += f"        {input_var} = 0;\n"
+        return code
+
+    def __generate_circuit_evaluation(self) -> str:
+        """Generate circuit evaluation code"""
+        code = "\n        // Evaluate circuit in topological order\n"
+        for node in self.ordered_nodes:
+            if node not in self.inputs:
+                equation = self.G.nodes[node].get('equation')
+                if equation is not None:
+                    code += f"        {node} = ({equation});\n"
+        return code
+
+    def __generate_output_assignments(self) -> str:
+        """Generate output assignments limited to 64 bits"""
+        code = "\n        // Store result for this point\n"
+        code += "        result = 0;\n"
+        for i, output in enumerate(self.outputs[:self.effective_outputs]):
+            code += f"        result |= ((unsigned long long){output} & 1ULL) << {i};\n"
+        return code
+
+    def __generate_n_points_kernel(self, points_per_thread: int = 10000) -> None:
+        """Generate CUDA kernel for processing N points per thread with 64-bit limitation"""
+        self.cuda_code += f"""
+    __global__ void evaluate_circuit(unsigned long long *output, unsigned long long start_idx, unsigned long long end_idx, int points_per_thread) {{
+        unsigned long long base_idx = blockIdx.x * blockDim.x + threadIdx.x;
+        {self.__generate_variable_declarations()}
+        unsigned long long result = 0;
+
+
+        
+        // Each thread processes points_per_thread points
+        for (int point = 0; point < points_per_thread; point++) {{
+            unsigned long long idx = base_idx * points_per_thread + point + start_idx;
+            if (idx >= end_idx) return;
+            
+            unsigned long long x = idx;
+            {self.__generate_input_assignments()}
+            {self.__generate_circuit_evaluation()}
+            {self.__generate_output_assignments()}
+            
+            // Store the result in the correct position
+            output[base_idx * points_per_thread + point] = result;
+        }}
+    }}
+    """
+
+    def __generate_n_points_main(self, threads_per_block: int = 1024, points_per_thread: int = 10000) -> None:
+        """Generate main function with N points per thread support and 64-bit limitation"""
+        self.cuda_code += f"""
+    int main() {{
+        const unsigned int num_inputs = {self.effective_inputs};  // Limited to 64 bits
+        const unsigned long long num_combinations = 1ULL << num_inputs;
+        
+        const int threadsPerBlock = {threads_per_block};
+        const int numSMs = 24;  // For RTX 4060
+        const int blocksPerSM = 32;
+        const int optimalBlocks = numSMs * blocksPerSM;
+        const int pointsPerThread = {points_per_thread};
+        
+        const unsigned long long threadsPerLaunch = (unsigned long long)optimalBlocks * threadsPerBlock;
+        const unsigned long long pointsPerLaunch = threadsPerLaunch * pointsPerThread;
+        const unsigned long long numLaunches = (num_combinations + pointsPerLaunch - 1) / pointsPerLaunch;
+        // const unsigned long long numLaunches = 1;
+        
+        printf("Using %d least significant input bits\\n", num_inputs);
+        printf("Using %d least significant output bits\\n", {self.effective_outputs});
+        printf("Points per thread: %d\\n", pointsPerThread);
+        printf("Threads per block: %d\\n", threadsPerBlock);
+        printf("Blocks per grid: %d\\n", optimalBlocks);
+        printf("Total points per launch: %llu\\n", pointsPerLaunch);
+        printf("Required launches: %llu\\n\\n", numLaunches);
+        
+        cudaEvent_t start, stop;
+        CHECK_CUDA_ERROR(cudaEventCreate(&start));
+        CHECK_CUDA_ERROR(cudaEventCreate(&stop));
+        
+        const size_t outputSizePerLaunch = pointsPerLaunch * sizeof(unsigned long long);
+        unsigned long long *h_output = (unsigned long long*)malloc(outputSizePerLaunch);
+        if (!h_output) {{
+            printf("Error: Host memory allocation failed\\n");
+            return 1;
+        }}
+        
+        unsigned long long *d_output;
+        CHECK_CUDA_ERROR(cudaMalloc(&d_output, outputSizePerLaunch));
+        
+        CHECK_CUDA_ERROR(cudaEventRecord(start));
+        
+        for (unsigned long long i = 0; i < numLaunches; i++) {{
+            unsigned long long start_idx = i * pointsPerLaunch;
+            unsigned long long end_idx = (start_idx + pointsPerLaunch < num_combinations) ? 
+                                       start_idx + pointsPerLaunch : num_combinations;
+            
+            CHECK_CUDA_ERROR(cudaMemset(d_output, 0, outputSizePerLaunch));
+            
+            evaluate_circuit<<<optimalBlocks, threadsPerBlock>>>(
+                d_output, start_idx, end_idx, pointsPerThread
+            );
+            
+            cudaError_t kernelError = cudaGetLastError();
+            if (kernelError != cudaSuccess) {{
+                printf("Kernel error: %s\\n", cudaGetErrorString(kernelError));
+                cudaFree(d_output);
+                free(h_output);
+                return 1;
+            }}
+            
+            CHECK_CUDA_ERROR(cudaMemcpy(h_output, d_output, outputSizePerLaunch, cudaMemcpyDeviceToHost));
+        }}
+        
+        CHECK_CUDA_ERROR(cudaEventRecord(stop));
+        CHECK_CUDA_ERROR(cudaEventSynchronize(stop));
+        
+        float milliseconds = 0;
+        CHECK_CUDA_ERROR(cudaEventElapsedTime(&milliseconds, start, stop));
+        printf("GPU Execution time: %.3f milliseconds\\n", milliseconds);
+        
+        free(h_output);
+        CHECK_CUDA_ERROR(cudaFree(d_output));
+        CHECK_CUDA_ERROR(cudaEventDestroy(start));
+        CHECK_CUDA_ERROR(cudaEventDestroy(stop));
+        
+        return 0;
+    }}
+    """
 
     def __generate_cuda_kernel(self) -> None:
         """
@@ -557,6 +695,13 @@ class CudaGenerator():
     # Public Methods     #
     #====================#
 
+    def generate_n_points_code(self, threads_per_block: int = 1024, points_per_thread: int = 10000) -> str:
+        """Generate CUDA code with N points per thread support and 64-bit limitation"""
+        self.__generate_cuda_header()
+        self.__generate_n_points_kernel(points_per_thread)
+        self.__generate_n_points_main(threads_per_block, points_per_thread)
+        return self.cuda_code
+
     def generate_code(self, num_blocks:int  = 1024, num_threads:int = 1024) -> str:
         """
         Generate the CUDA code for the LUT graph.
@@ -624,7 +769,11 @@ class CudaGenerator():
         os.system(f"nvcc {file_path} -o {folder}/circuit")
         return f"{folder}/circuit"
     
-    def run(self, file_path:str , num_blocks:int = 1024, num_threads:int = 1024) -> str:
+    def run(self, file_path:str ,
+            method:str = "1_point", 
+            num_blocks:int = 1024, 
+            num_threads:int = 1024, 
+            poins_per_thread:int = 10000) -> str:
         """
         Run the CUDA code.
 
@@ -642,8 +791,10 @@ class CudaGenerator():
         ------
         - file_path: str
         """
-
-        self.generate_code(num_blocks, num_threads)
+        if method == "1_point":
+            self.generate_code(num_blocks, num_threads)
+        else:
+            self.generate_n_points_code(num_threads, poins_per_thread)
         file_path = self.write_code(file_path)
         return file_path
     
