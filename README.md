@@ -70,6 +70,7 @@ Options:
 LUT2GPU/
 ├── misc/               # Documentation and resources
 ├── src/               # Source code
+│   ├── utils/         # Utility scripts
 │   ├── codegen/      # CUDA generation tools
 │   ├── graph/        # LUT graph handlers
 │   └── ml/          # ML components
@@ -80,7 +81,7 @@ LUT2GPU/
 
 ## Core Components
 
-1. **CUDA Generator** (`src/lut2graph.py`):
+1. **CUDA Generator** (`src/graph/lut2graph.py`):
    - Optimized CUDA code generation
    - 64-bit data type support
    - Multi-point parallel processing

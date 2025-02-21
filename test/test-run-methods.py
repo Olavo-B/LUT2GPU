@@ -4,7 +4,7 @@ import os
 import csv
 
 
-from src.runMethods import RunMethods
+from src.ultils.runMethods import RunMethods
 
 class TestRunMethods(unittest.TestCase):
     def setUp(self):

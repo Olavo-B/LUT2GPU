@@ -10,8 +10,8 @@ import os
 import argparse
 import sys
 
-from src.ultils.runScripts import RunScripts
-from src.runMethods import RunMethods
+from ultils.runScripts import RunScripts
+from ultils.runMethods import RunMethods
 
 def validate_file(file_path):
     """Validate if the file exists and has a .v extension"""

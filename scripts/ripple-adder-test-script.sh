@@ -15,7 +15,7 @@ NC='\033[0m' # No Color
 
 # Configuration Variables
 BASE_PATH="results"
-PYTHON_SCRIPT="app.py"
+PYTHON_SCRIPT="src/app.py"
 MIN_BITS=8
 MAX_BITS=32
 STEP_BITS=2

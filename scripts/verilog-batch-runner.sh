@@ -60,7 +60,7 @@ trap handle_interrupt SIGINT SIGTERM
 
 # Function to check if python script exists
 check_python_script() {
-    if [ ! -f "flexible-verilog-runner.py" ]; then
+    if [ ! -f "src/flexible-verilog-runner.py" ]; then
         echo "Error: flexible-verilog-runner.py not found in current directory"
         exit 1
     fi
@@ -82,7 +82,7 @@ process_file() {
     
     # Create a temporary script for the Python command
     temp_script=$(mktemp)
-    echo "python3 flexible-verilog-runner.py \
+    echo "python3 src/flexible-verilog-runner.py \
         -v \"$vfile\" \
         -t \"$module_name\" \
         $SIMULATION_MODE \
@@ -136,6 +136,7 @@ CUDA_BLOCKS=768
 TIMEOUT_VALUE=3600
 PROFILE=""
 DEBUG=""
+METHOD="1_point"
 declare -a current_pids=()
 
 # Parse command line arguments

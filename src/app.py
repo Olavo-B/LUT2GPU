@@ -13,9 +13,9 @@ from itertools import product
 import os
 import argparse
 
-from src.ultils.sumConstructor import RippleAdderGenerator
-from src.ultils.runScripts import RunScripts
-from src.runMethods import RunMethods
+from codegen.sumConstructor import RippleAdderGenerator
+from ultils.runScripts import RunScripts
+from ultils.runMethods import RunMethods
 
 def parse_arguments():
     """

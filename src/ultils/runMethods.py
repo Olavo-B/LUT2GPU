@@ -17,10 +17,10 @@ import numpy as np
 import pandas as pd
 from datetime import datetime
 
-from src.lut2graph import Graph
-from src.ultils.style import Mensage
-from src.lut2graph import CudaGenerator
-from src.ultils.testbenchConstructor import VerilogTestbenchGenerator
+from graph.lut2graph import Graph
+from ultils.style import Mensage
+from codegen.cudaConstructor import CudaGenerator
+from codegen.testbenchConstructor import VerilogTestbenchGenerator
 
 class RunMethods:
     """
@@ -40,10 +40,11 @@ class RunMethods:
             debug (bool, optional): Enable debug output. Defaults to False.
         """
         self.debug = debug
+        self.mensage = Mensage()
+
         self.graph = Graph(blif_path, verilog_path, debug=debug) # Graph object
         self.G = self.graph.graph # NetworkX graph object
         self.folder_path = self.__create_folder(name)
-        self.mensage = Mensage()
 
         # Generate testbench for Verilog module
         tb_gen = VerilogTestbenchGenerator(f"{verilog_path}", debug=debug)
@@ -275,7 +276,7 @@ class RunMethods:
                                    blocks_per_grid=blocks_per_grid)
 
         # Generate CUDA code
-        if self.debug: self.mensage.debug("Generating CUDA code...")
+        if self.debug: self.mensage.debug(f"Generating CUDA code im {cuda_path} ")
         exe_path = f'{cuda_path}/circuit_evaluator.cu'
         cuda_gen = CudaGenerator(self.G)
         exe_path = cuda_gen.run(exe_path, method=method, 

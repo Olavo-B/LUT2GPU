@@ -9,7 +9,7 @@
 # /*****************************************************************************/
 
 
-from src.ultils.style import Mensage
+from ultils.style import Mensage
 
 class RippleAdderGenerator:
     """

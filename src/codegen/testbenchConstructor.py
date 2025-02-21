@@ -14,7 +14,7 @@ import math
 from itertools import product
 
 
-from src.ultils.style import Mensage
+from ultils.style import Mensage
 
 class VerilogTestbenchGenerator:
     """

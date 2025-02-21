@@ -13,8 +13,8 @@ import subprocess
 import time
 import os
 
-from src.ultils.style import Mensage, Style
-from src.ultils.sumConstructor import RippleAdderGenerator
+from ultils.style import Mensage, Style
+from codegen.sumConstructor import RippleAdderGenerator
 
 class RunScripts():
 
