@@ -79,6 +79,11 @@ def main():
                         default=768, 
                         help='CUDA blocks per grid (default: 768)')
     
+    parser.add_argument('--probability',
+                        type=int,
+                        default=50,
+                        help='Probability of pruning (default: 50)')
+    
     parser.add_argument('--profile', 
                         action='store_true', 
                         help='Enable CUDA profiling')
@@ -91,6 +96,11 @@ def main():
                         type=str, 
                         default='1_point', 
                         help='Method to run (default: 1_point)')
+    
+    parser.add_argument('--output', '-o',
+                        type=str,
+                        default='results',
+                        help='Output directory for results (default is results)')
 
     # Parse arguments
     args = parser.parse_args()
@@ -109,8 +119,8 @@ def main():
         run_modes = ['cuda', 'iverilog', 'verilator']
     
     # Ensure output directories exist
-    os.makedirs(f'results/', exist_ok=True)
-    PATH = f'results/{args.name}'
+    PATH = f'results/{args.name}' if args.output == 'results' else os.path.join(args.output, args.name)
+    os.makedirs(PATH, exist_ok=True)
 
     # Move verilog file to the correct path
     os.makedirs(os.path.join(PATH, 'verilog'), exist_ok=True)
@@ -119,18 +129,19 @@ def main():
     print(f'{PATH}/verilog/{os.path.basename(args.verilog)}')
     
     # Create RunScripts instance
-    script_runner = RunScripts(
+    scripts = RunScripts(
         path=PATH,
         verilog_path=f'{os.path.basename(args.verilog)}', 
         top_module=args.top_module,
         args={'otimizations': ["resyn3", 'resyn'], 'lut_k': args.lut_size},
         debug=args.debug
-    ).run() 
+    )
+    scripts.run()
 
 
     # Create RunMethods instance
     runner = RunMethods(
-        name=args.name, 
+        name=PATH, 
         blif_path=os.path.join(PATH, 'somador.blif'), 
         verilog_path=os.path.join(PATH, 'verilog', 'somador.v'), 
         debug=args.debug
@@ -139,7 +150,7 @@ def main():
     # Execution block
     try:
         # Determine base paths for different simulation types
-        base_path = f'results/{args.name}'
+        base_path = PATH
         
         if 'cuda' in run_modes:
             print("\n🚀 Running CUDA Simulation:")
@@ -148,7 +159,8 @@ def main():
                 threads_per_block=args.cuda_threads, 
                 blocks_per_grid=args.cuda_blocks, 
                 num_runs=args.num_runs,
-                method=args.method, 
+                method=args.method,
+                probability=args.probability, 
                 profile=args.profile
             )
         

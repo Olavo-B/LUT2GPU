@@ -35,19 +35,19 @@ def parse_arguments():
     )
     
     # CUDA Configuration Arguments
-    parser.add_argument(
-        '--threads-per-block', 
-        type=int, 
-        default=256,
-        help='Number of CUDA threads per block (default: 256)'
-    )
+    parser.add_argument('--cuda-threads', 
+                        type=int, 
+                        default=256, 
+                        help='CUDA threads per block (default: 256)')
     
-    parser.add_argument(
-        '--blocks-per-grid', 
-        type=int, 
-        default=768,
-        help='Number of CUDA blocks per grid (default: 768)'
-    )
+    parser.add_argument('--cuda-blocks', 
+                        type=int, 
+                        default=768, 
+                        help='CUDA blocks per grid (default: 768)')
+    
+    parser.add_argument('--profile', 
+                        action='store_true', 
+                        help='Enable CUDA profiling')
     
     # Optional Debugging and Logging Arguments
     parser.add_argument(
@@ -62,6 +62,15 @@ def parse_arguments():
         default=3,
         help='Number of test runs (default: 3)'
     )
+
+    
+    parser.add_argument(
+        '--method', '-m', 
+        type=str, 
+        default='1_point', 
+        help='Method to run (default: 1_point)')
+    
+
     
     parser.add_argument(
         '--output-path', 
@@ -109,16 +118,20 @@ def main():
             verilog_path=os.path.join(PATH, 'verilog', 'somador.v'), 
             debug=args.debug
         )
+        print("\n🚀 Running CUDA Simulation:")
         runner.run_cuda(
-            cuda_path=os.path.join(PATH, 'cuda'), 
-            blocks_per_grid=args.blocks_per_grid, 
-            threads_per_block=args.threads_per_block, 
-            num_runs=args.num_runs,
-        )
-        runner.run_verilator(
-            verilator_path=os.path.join(PATH, 'verilator'),
-            num_runs=args.num_runs,
-        )
+                cuda_path=os.path.join(PATH, 'cuda'), 
+                threads_per_block=args.cuda_threads, 
+                blocks_per_grid=args.cuda_blocks, 
+                num_runs=args.num_runs,
+                method=args.method, 
+                profile=args.profile
+            )
+        
+        # runner.run_verilator(
+        #     verilator_path=os.path.join(PATH, 'verilator'),
+        #     num_runs=args.num_runs,
+        # )
         runner.analyze_results()
 
     except Exception as e:
