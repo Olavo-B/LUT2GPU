@@ -13,11 +13,13 @@ import os
 import subprocess
 import time
 import csv
+import numpy as np
+import pandas as pd
 from datetime import datetime
 
 from src.lut2graph import Graph
-from src.lut2graph import CudaGenerator
 from src.ultils.style import Mensage
+from src.lut2graph import CudaGenerator
 from src.ultils.testbenchConstructor import VerilogTestbenchGenerator
 
 class RunMethods:
@@ -65,7 +67,7 @@ class RunMethods:
         Returns:
             str: Path to created folder
         """
-        base_path = f'results/{folder_path}'
+        base_path = f'{folder_path}'
         subdirs = ['cuda', 'verilog', 'verilator']
         
         for subdir in [base_path] + [f"{base_path}/{d}" for d in subdirs]:
@@ -214,6 +216,42 @@ class RunMethods:
             "numLaunches": numLaunches
         }
     
+    #==========================================================================#
+    # 2025-02-19 12:50:15
+    # Generate the probability distribution of the input data, and save it to a
+    # csv file, this section is temporary and will be removed in the future.
+    #==========================================================================#
+
+    def __generate_input_data(self, PATH: str, percentage: int, 
+                            thread_per_block: int = 256, 
+                            blocks_per_grid: int = 768):
+        """Generate input data with specified percentage of 1s."""
+
+
+        # Size = (num_thread, num_intermediary_nodes)
+        rows = (thread_per_block * blocks_per_grid)
+        cols = len(self.graph.intermediaries)
+
+        # Calculate the number of 1s needed in each row
+        num_ones = max(1,int((percentage / 100) * cols))
+
+         # Create a matrix of zeros
+        matrix = np.zeros((rows, cols), dtype=int)
+
+        # Generate random indices for 1s in each row
+        random_indices = np.argsort(np.random.rand(rows, cols), axis=1)[:, :num_ones]
+
+        # Use advanced indexing to set the 1s
+        row_indices = np.arange(rows)[:, np.newaxis]  # Row indices for each row
+        matrix[row_indices, random_indices] = 1
+
+        # Save the matrix to a CSV file
+        df = pd.DataFrame(matrix)
+        df.to_csv(PATH, index=False, header=False)
+
+    #==========================================================================#
+
+
     #================#
     # Public methods #
     #================#
@@ -221,12 +259,20 @@ class RunMethods:
 
     def run_cuda(self, cuda_path: str, threads_per_block: int = 256, 
                 blocks_per_grid: int = 768, num_runs: int = 10,
-                method: str = '1_point', profile: bool = False):
+                method: str = '1_point', profile: bool = False,
+                probability: int = 2):
         """Run and profile CUDA implementation."""
         self.mensage.info("Initializing CUDA execution:")
         self.mensage.info(f"• Threads per block: {threads_per_block}")
         self.mensage.info(f"• Blocks per grid: {blocks_per_grid}")
         self.mensage.info(f"• Number of runs: {num_runs}")
+
+        # 2025-02-19 13:34:30: Generate input data
+        # TODO: Remove this section in the future, due the estocaistic nature of the input data
+        self.__generate_input_data(PATH = f'{cuda_path}/p_vector.csv', 
+                                   percentage=probability, 
+                                   thread_per_block=threads_per_block, 
+                                   blocks_per_grid=blocks_per_grid)
 
         # Generate CUDA code
         if self.debug: self.mensage.debug("Generating CUDA code...")
@@ -235,7 +281,8 @@ class RunMethods:
         exe_path = cuda_gen.run(exe_path, method=method, 
                                 num_blocks=blocks_per_grid,
                                 num_threads=threads_per_block,
-                                poins_per_thread=4000)
+                                poins_per_thread=4000,
+                                p_vector_path=f'{cuda_path}/p_vector.csv',)
 
         # Compile CUDA code
         if self.debug: self.mensage.debug("Compiling CUDA code...")
@@ -335,7 +382,8 @@ class RunMethods:
                                         shell=True, capture_output=True, text=True)
                     
                     execution_time = (time.time() - start_time) * 1000
-                    num_of_combinations = 2**len(self.graph.inputs)
+                    # 2025-02-19 12:49:03: The number of combinations is limited to 30 to avoid overflow
+                    num_of_combinations = 2**len(self.graph.inputs) if len(self.graph.inputs) < 30 else 2**30
                     throughput = num_of_combinations / (execution_time / 1000) if execution_time > 0 else 0
                     
                     self.__save_result("verilator", execution_time, throughput)
