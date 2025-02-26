@@ -156,9 +156,10 @@ alias recadd3     "st; rec_add3; b; rec_add3; dc2; rec_add3; if -K 8; bidec; st;
 rl {{ blif_file }}
 
 # Loop para otimizações
-# {% for otimization in otimizations %}
-# {{ otimization }}; ps;
-# {% endfor %}
+{% for otimization in otimizations %}
+{{ otimization }}; ps;
+{% endfor %}
+
 
 # Transforma em AIG
 strash;

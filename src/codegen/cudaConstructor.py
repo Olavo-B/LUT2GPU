@@ -41,9 +41,9 @@ class CudaGenerator():
         self.cuda_code = ""
         
         # Calculate effective number of inputs (limited to 64 bits)
-        self.effective_inputs = min(self.num_inputs, 30)
+        self.effective_inputs = min(self.num_inputs, 14)
         # Calculate effective number of outputs (limited to 64 bits)
-        self.effective_outputs = min(self.num_outputs, 30)
+        self.effective_outputs = min(self.num_outputs, 64)
 
         
         if self.num_inputs > 64:
@@ -69,6 +69,11 @@ class CudaGenerator():
 #include <stdio.h>
 #include <cuda_runtime.h>
 #include <stdlib.h>
+#include <cstdlib> // For rand()
+#include <random>
+#include <vector>
+#include <algorithm>
+
 
 // Utility function to check CUDA errors
 #define CHECK_CUDA_ERROR(call) { \\
@@ -408,6 +413,41 @@ class CudaGenerator():
         return true;
     }}
 
+void generate_random_vector(int* h_input, int num_inputs, int num_combinations) {{
+    // Use modern C++ random number generation
+    std::random_device rd;
+    std::mt19937_64 gen(rd());
+    
+    // Calculate the maximum value based on num_inputs
+    unsigned long long max_val = (num_inputs >= 64) ? 
+        (1ULL << 30) : (1ULL << num_inputs);
+    
+    // Pre-allocate vector instead of using a set
+    std::vector<unsigned long long> numbers;
+    numbers.reserve(num_combinations);
+    
+    if (num_combinations <= max_val / 4) {{  // If sparse sampling
+        // Direct generation with uniform distribution
+        std::uniform_int_distribution<unsigned long long> dis(0, max_val - 1);
+        
+        while (numbers.size() < num_combinations) {{
+            unsigned long long val = dis(gen);
+            if (std::find(numbers.begin(), numbers.end(), val) == numbers.end()) {{
+                numbers.push_back(val);
+            }}
+        }}
+    }} else {{  // If dense sampling
+        // Generate sequential numbers and shuffle
+        numbers.resize(max_val);
+        std::iota(numbers.begin(), numbers.end(), 0ULL);
+        std::shuffle(numbers.begin(), numbers.end(), gen);
+        numbers.resize(num_combinations);
+    }}
+    
+    // Copy to output array
+    std::copy(numbers.begin(), numbers.end(), h_input);
+}}
+
 void read_pruning_vectors(const char* filename, int* h_p_vector, int totalThreads, int num_intermediary) {{
     FILE* file = fopen(filename, "r");
     if (!file) {{
@@ -566,7 +606,7 @@ void read_pruning_vectors(const char* filename, int* h_p_vector, int totalThread
         int main() {{
             // Circuit parameters
             const unsigned long long num_inputs = {self.num_inputs};
-            const int num_used_inputs = 30;
+            const int num_used_inputs = 21;
             const int num_intermediary = {len(self.intermediary)};
             const int num_combinations = 1 << num_used_inputs;
             
@@ -604,9 +644,12 @@ void read_pruning_vectors(const char* filename, int* h_p_vector, int totalThread
             }}
             
             // Initialize input combinations
-            for (int i = 0; i < num_combinations; i++) {{
-                h_input[i] = (unsigned long long)i;
-            }}
+            /*
+            *for (int i = 0; i < num_combinations; i++) {{
+            *    h_input[i] = (unsigned long long)i;
+            *}}
+            */
+            generate_random_vector(h_input, num_used_inputs, num_combinations);
             
             // Allocate and initialize vectors for each thread
             for (int i = 0; i < totalThreads; i++) {{

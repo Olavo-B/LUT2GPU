@@ -90,7 +90,7 @@ class RunMethods:
             return
 
         with open(self.results_file, 'a') as f:
-            timestamp = datetime.now().timestamp()
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             f.write(f"{timestamp},{len(self.graph.inputs)},{len(self.graph.outputs)},"
                    f"{implementation},{execution_time:.3f},"
                    f"{throughput:.2f},{num_operations or 'N/A'},"
@@ -181,7 +181,7 @@ class RunMethods:
         operations_per_combination = self.graph.operations
         
         # Total number of operations across all combinations
-        total_operations = total_combinations * operations_per_combination
+        total_operations = total_combinations * operations_per_combination * points_per_thread
         
         # Convert execution time to seconds
         execution_time_seconds = execution_time / 1000.0
@@ -192,7 +192,7 @@ class RunMethods:
 
         # Calculate number of launches
         if points_per_thread > 1:
-            numLaunches = (total_combinations + (points_per_thread * threads_per_launch) - 1) / (points_per_thread * threads_per_launch)
+            numLaunches = 1
         else:
             numLaunches = (total_combinations + threads_per_launch - 1) / threads_per_launch;
         
@@ -267,13 +267,21 @@ class RunMethods:
         self.mensage.info(f"• Threads per block: {threads_per_block}")
         self.mensage.info(f"• Blocks per grid: {blocks_per_grid}")
         self.mensage.info(f"• Number of runs: {num_runs}")
+        self.mensage.info(f"• Method: {method}")
+        self.mensage.info(f"• Profile: {profile}")
+        self.mensage.info(f"• Probability: {probability}")
+        
 
         # 2025-02-19 13:34:30: Generate input data
         # TODO: Remove this section in the future, due the estocaistic nature of the input data
-        self.__generate_input_data(PATH = f'{cuda_path}/p_vector.csv', 
-                                   percentage=probability, 
-                                   thread_per_block=threads_per_block, 
-                                   blocks_per_grid=blocks_per_grid)
+        # 2025-02-25 15:31:32: 
+        # The input data is created just if the method is 'pruned', 
+        # otherwise the input data is not necessary
+        if method == 'pruned':
+            self.__generate_input_data(PATH = f'{cuda_path}/p_vector.csv', 
+                                    percentage=probability, 
+                                    thread_per_block=threads_per_block, 
+                                    blocks_per_grid=blocks_per_grid)
 
         # Generate CUDA code
         if self.debug: self.mensage.debug(f"Generating CUDA code im {cuda_path} ")
@@ -312,7 +320,8 @@ class RunMethods:
                 execution_time = self.__parse_cuda_output(result.stdout)
                 throughput = self.__calculate_throughput(execution_time,
                                                       blocks_per_grid, 
-                                                      threads_per_block)
+                                                      threads_per_block,
+                                                      points_per_thread=4000 if method == 'n_points' else 1)
                 
                 self.__save_result("cuda", execution_time, 
                                 throughput['operations_per_second'],

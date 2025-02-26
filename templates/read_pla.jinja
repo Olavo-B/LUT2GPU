@@ -1,8 +1,8 @@
-# Lê a tabela verdade
+# Lê o arquivo Verilog e define o módulo top
 read_verilog {{ verilog_path }}
 hierarchy -check -top {{top_module}}
 
-# Executa a síntese geral
+# Perform generic synthesis
 opt_expr
 opt_merge -nomux
 proc
@@ -13,12 +13,24 @@ opt_clean
 opt_expr
 synth -flatten
 opt_clean
-# synth
 
 
-# Salva o BLIF final
-write_blif {{ blif_output }} 
+flowmap -maxlut 5
+
+clean
+opt_clean
+flatten
+techmap; opt
+dffunmap
+
+
+tee -o {{output_path}}/report.json stat -json
 
 
 
+# Export netlists
+write_blif -gates {{output_path}}/somador.blif
+abc -liberty /yosys/examples/cmos/cmos_cells.lib -script {{output_path}}/abc_script.rc
 
+
+stat

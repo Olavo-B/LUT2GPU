@@ -60,7 +60,7 @@ class RunScripts():
         yosys_script = template_yosys.render(verilog_path=self.verilog,
                                             top_module=self.top_module,
                                             abc_script=f"{self.path}/abc_script.abc",
-                                            blif_output=f"{self.path}/somador.blif",
+                                            output_path=self.path,
                                         )
 
         with open(f"{self.path}/yosys_script.ys", "w") as file:
@@ -74,6 +74,10 @@ class RunScripts():
         
             stdout, stderr = process.communicate()  # Captura a saída e o erro
 
+            if self.debug:
+                self.mensage.debug(f"Yosys output: \n")
+                print(stdout.decode('utf-8'))
+                print(stderr)
             self.mensage.success(f"Yosys finished...saved at {self.path}/yosys_script.ys")
 
         except subprocess.CalledProcessError as e:
@@ -94,7 +98,15 @@ class RunScripts():
         except subprocess.CalledProcessError as e:
             # 2024-11-17 00:36:59
             # trow an error if the Yosys was not executed successfully
-            raise Exception(self.mensage.error(f"Error in ABC: {e}"))   
+            raise Exception(self.mensage.error(f"Error in ABC: {e}"))
+
+    def run_yosys(self):
+        self.__generate_scripts()
+        self.__run_yosys()
+
+    def run_abc(self):
+        self.__generate_scripts()
+        self.__run_abc()   
 
     def run(self):
         self.__generate_scripts()

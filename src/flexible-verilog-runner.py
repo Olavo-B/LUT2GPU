@@ -12,6 +12,7 @@ import sys
 
 from ultils.runScripts import RunScripts
 from ultils.runMethods import RunMethods
+from ultils.style import Mensage
 
 def validate_file(file_path):
     """Validate if the file exists and has a .v extension"""
@@ -30,7 +31,7 @@ def main():
 
     # Required Arguments
     parser.add_argument('-v', '--verilog', 
-                        type=validate_file, 
+                        type=str, 
                         required=True, 
                         help='Path to the input Verilog file')
     
@@ -126,7 +127,9 @@ def main():
     os.makedirs(os.path.join(PATH, 'verilog'), exist_ok=True)
     os.system(f"cp {args.verilog} {os.path.join(PATH, 'verilog')}")
 
-    print(f'{PATH}/verilog/{os.path.basename(args.verilog)}')
+
+    mensage = Mensage()
+    mensage.title()
     
     # Create RunScripts instance
     scripts = RunScripts(
@@ -136,7 +139,7 @@ def main():
         args={'otimizations': ["resyn3", 'resyn'], 'lut_k': args.lut_size},
         debug=args.debug
     )
-    scripts.run()
+    scripts.run_yosys()
 
 
     # Create RunMethods instance
