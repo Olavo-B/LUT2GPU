@@ -2,7 +2,7 @@
 
 
 <p align="center">
-    <img src="misc/docs/Isometric.png" alt="drawing" width="300" />
+    <img src="misc/docs/Isometric.png" alt="drawing" />
 </p >
 
 
