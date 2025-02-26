@@ -1,5 +1,13 @@
-import matplotlib.pyplot as plt
-from itertools import product
+# /*****************************************************************************/
+#  * File: cudaConstructor.py
+#  * Author: Olavo Alves Barros Silva
+#  * Contact: olavo.barros@ufv.com
+#  * Date: 2025-01-27
+#  * License: [License Type]
+#  * Description: This script handle the code generation for CUDA code.
+# /*****************************************************************************/
+
+
 import networkx as nx
 import os
 import re
@@ -27,7 +35,7 @@ class CudaGenerator():
     - cuda_code: str
         The generated CUDA code.
     """
-    def __init__(self, graph:nx.DiGraph):
+    def __init__(self, graph:nx.DiGraph, max_inputs:int = 64, max_outputs:int = 64):
         self.mensage = Mensage()
         
         self.G = graph
@@ -41,16 +49,15 @@ class CudaGenerator():
         self.cuda_code = ""
         
         # Calculate effective number of inputs (limited to 64 bits)
-        self.effective_inputs = min(self.num_inputs, 14)
+        self.effective_inputs = min(self.num_inputs, max_inputs)
         # Calculate effective number of outputs (limited to 64 bits)
-        self.effective_outputs = min(self.num_outputs, 64)
+        self.effective_outputs = min(self.num_outputs, max_outputs)
 
         
-        if self.num_inputs > 64:
-            self.mensage.warning(f"Number of inputs ({self.num_inputs}) exceeds 64 bits. Only using least significant 64 bits.")
-        if self.num_outputs > 64:
-            self.mensage.warning(f"Number of outputs ({self.num_outputs}) exceeds 64 bits. Only storing least significant 64 bits.")
-
+        if self.num_inputs > max_inputs:
+            self.mensage.warning(f"Number of inputs ({self.num_inputs}) exceeds {max_inputs} bits. Only using least significant {max_inputs} bits.")
+        if self.num_outputs > max_outputs:
+            self.mensage.warning(f"Number of outputs ({self.num_outputs}) exceeds {max_outputs} bits. Only storing least significant {max_outputs} bits.")
     
     def __str__(self):
         return self.cuda_code
@@ -880,6 +887,7 @@ void read_pruning_vectors(const char* filename, int* h_p_vector, int totalThread
             self.generate_pruned_code(num_threads, p_vector_path, file_path)
 
         file_path = self.write_code(file_path)
+        self.mensage.success(f"CUDA code generatrion complete, code saved to {file_path}")
         return file_path
     
 

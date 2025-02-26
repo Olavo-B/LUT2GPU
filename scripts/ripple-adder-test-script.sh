@@ -28,6 +28,16 @@ BLOCKS_PER_GRID_OPTIONS=768
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 LOG_FILE="${BASE_PATH}/test_results_${TIMESTAMP}.log"
 
+print_usage() {
+    echo "Usage: $0 [options]"
+    echo "Options:"
+    echo "  --min-bits <N>          Minimum number of bits to test (default: 8)"
+    echo "  --max-bits <N>          Maximum number of bits to test (default: 32)"
+    echo "  --step-bits <N>         Step size for bits testing (default: 2)"
+    echo "  --threads <N>           Number of threads per block (default: 256)"
+    echo "  --blocks <N>            Number of blocks per grid (default: 768)"
+}
+
 # Function to print colored output
 print_status() {
     local color="$1"
@@ -105,6 +115,10 @@ while [[ $# -gt 0 ]]; do
         --blocks)
             BLOCKS_PER_GRID_OPTIONS=($2)
             shift 2
+            ;;
+        -h|--help)
+            print_usage
+            exit 0
             ;;
         *)
             echo "Unknown parameter: $1"

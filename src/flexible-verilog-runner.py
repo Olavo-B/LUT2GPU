@@ -26,7 +26,7 @@ def main():
     # Argument Parser
     parser = argparse.ArgumentParser(
         description='Comprehensive Verilog Simulation and Performance Testing Tool',
-        epilog='Example: python verilog_runner.py -v circuit.v -m <top_module name> --all'
+        epilog='Example: python verilog_runner.py -v circuit.v -t <top_module name> --all'
     )
 
     # Required Arguments
@@ -45,15 +45,18 @@ def main():
     group.add_argument('--cuda', 
                        action='store_true', 
                        help='Run only CUDA simulation')
-    group.add_argument('--iverilog', 
+    group.add_argument('--iverilog',
+                        action='store_true',
+                        help='Run only Icarus Verilog simulation')
+    group.add_argument('--cpu', 
                        action='store_true', 
-                       help='Run only Icarus Verilog simulation')
+                       help='Run only CPU simulation')
     group.add_argument('--verilator', 
                        action='store_true', 
                        help='Run only Verilator simulation')
     group.add_argument('--all', 
                        action='store_true', 
-                       help='Run all simulations (CUDA, Iverilog, Verilator)')
+                       help='Run all simulations (CUDA, CPU, Verilator)')
 
     # Performance and Profiling Options
     parser.add_argument('--name', 
@@ -114,10 +117,12 @@ def main():
         run_modes.append('iverilog')
     if args.verilator or args.all:
         run_modes.append('verilator')
+    if args.cpu or args.all:
+        run_modes.append('cpu')
 
     # If no mode specified, default to all
     if not run_modes:
-        run_modes = ['cuda', 'iverilog', 'verilator']
+        run_modes = ['cuda', 'iverilog', 'verilator', 'cpp']
     
     # Ensure output directories exist
     PATH = f'results/{args.name}' if args.output == 'results' else os.path.join(args.output, args.name)
@@ -174,13 +179,22 @@ def main():
         #         exe_name='circuit', 
         #         num_runs=args.num_runs
         #     )
-        
-        if 'verilator' in run_modes:
-            print("\n🔬 Running Verilator Simulation:")
-            runner.run_verilator(
-                verilator_path=f'{base_path}/verilator', 
-                num_runs=args.num_runs
+
+        if 'cpu' in run_modes:
+            print("\n🧩 Running CPU Simulation:")
+            runner.run_cpu(
+                cpu_path=f'{base_path}/cpp', 
+                num_runs=args.num_runs,
+                method=args.method,
+                probability=args.probability
             )
+        
+        # if 'verilator' in run_modes:
+        #     print("\n🔬 Running Verilator Simulation:")
+        #     runner.run_verilator(
+        #         verilator_path=f'{base_path}/verilator', 
+        #         num_runs=args.num_runs
+        #     )
 
         # Analyze overall results
         print("\n📊 Performance Analysis:")

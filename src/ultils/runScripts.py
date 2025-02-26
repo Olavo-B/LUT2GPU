@@ -74,10 +74,7 @@ class RunScripts():
         
             stdout, stderr = process.communicate()  # Captura a saída e o erro
 
-            if self.debug:
-                self.mensage.debug(f"Yosys output: \n")
-                print(stdout.decode('utf-8'))
-                print(stderr)
+
             self.mensage.success(f"Yosys finished...saved at {self.path}/yosys_script.ys")
 
         except subprocess.CalledProcessError as e:
