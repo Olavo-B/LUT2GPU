@@ -469,7 +469,6 @@ endmodule"""
             test_vectors
         )
     
-
     def save_files(self, path:str = '.'):
         """
         Saves all generated files (adder, testbench, and test script).

@@ -189,12 +189,12 @@ def main():
                 probability=args.probability
             )
         
-        # if 'verilator' in run_modes:
-        #     print("\n🔬 Running Verilator Simulation:")
-        #     runner.run_verilator(
-        #         verilator_path=f'{base_path}/verilator', 
-        #         num_runs=args.num_runs
-        #     )
+        if 'verilator' in run_modes:
+            print("\n🔬 Running Verilator Simulation:")
+            runner.run_verilator(
+                verilator_path=f'{base_path}/verilator', 
+                num_runs=args.num_runs
+            )
 
         # Analyze overall results
         print("\n📊 Performance Analysis:")

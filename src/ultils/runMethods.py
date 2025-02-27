@@ -281,6 +281,7 @@ class RunMethods:
         exe_path = f'{cpu_path}/circuit_evaluator.cpp'
         cpu_gen = CppGenerator(self.G,
                                max_inputs=30)
+        
         exe_path = cpu_gen.run(exe_path, method=method)
 
         # Compile CPU code
@@ -351,6 +352,7 @@ class RunMethods:
         exe_path = f'{cuda_path}/circuit_evaluator.cu'
         cuda_gen = CudaGenerator(self.G,
                                  max_inputs=30)
+        
         exe_path = cuda_gen.run(exe_path, method=method, 
                                 num_blocks=blocks_per_grid,
                                 num_threads=threads_per_block,

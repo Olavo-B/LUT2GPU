@@ -304,6 +304,7 @@ class Graph():
         with open(output_file, 'w') as f:
             f.write(content)
 
+
     def __parse_blif(self, blif_path:str, verilog_path:str) -> None:
         """
         Parse a BLIF file and create a graph.
