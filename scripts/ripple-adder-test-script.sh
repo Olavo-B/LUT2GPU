@@ -64,8 +64,9 @@ run_test() {
         # Run Python script with parameters
         python3 "${PYTHON_SCRIPT}" \
             --n-bits "${n_bits}" \
-            --threads-per-block "${threads_per_block}" \
-            --blocks-per-grid "${blocks_per_grid}"
+            --cuda-threads "${threads_per_block}" \
+            --cuda-blocks "${blocks_per_grid}" \
+            --num-runs 2 \
 
         # Capture exit status
         EXIT_STATUS=$?

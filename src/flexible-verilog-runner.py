@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /*****************************************************************************/
 #  * File: verilog_runner.py
-#  * Author: AI Assistant
+#  * Author: Olavo Barros
 #  * Date: 2025-02-04
 #  * Description: Comprehensive Verilog simulation and performance testing tool
 # /*****************************************************************************/

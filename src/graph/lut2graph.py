@@ -38,6 +38,7 @@ class Graph():
         self.mensage = Mensage()    
 
         self.mensage.success("Graph created successfully!")
+        
 
     
     def __getitem__(self, node):

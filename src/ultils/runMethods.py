@@ -321,7 +321,6 @@ class RunMethods:
             except Exception as e:
                 self.mensage.error(f"Run {i+1} failed: {str(e)}")
 
-
     def run_cuda(self, cuda_path: str, threads_per_block: int = 256, 
                 blocks_per_grid: int = 768, num_runs: int = 10,
                 method: str = '1_point', profile: bool = False,

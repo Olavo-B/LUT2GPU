@@ -103,7 +103,58 @@ public:
     }
 };
         """
-        
+
+    def __generate_auxiliary_functions(self) -> None:
+        """
+        Generate the auxiliary functions for the CUDA code.
+        In this case, it includes:
+
+        - save_results:
+            A function that saves the results to a CSV file.
+        - read_input_combinations:
+            A function that reads the input combinations from a CSV file.
+        """
+                
+        self.cpp_code += """
+// Function that saves the results to a CSV file
+void save_results(const std::string& filename, const std::vector<uint64_t>& results) {
+    std::ofstream
+
+    outfile(filename);
+
+    if (outfile.is_open()) {
+        outfile << "thread_index,match_count\\n";
+        for (int i = 0; i < results.size(); i++) {
+            outfile << i << "," << results[i] << std::endl;
+        }
+        outfile.close();
+    }
+}
+
+// Function that reads input combinations from a CSV file
+void read_input_combinations(const std::string& filename, std::vector<std::vector<uint64_t>>& input_combinations) {
+    std::ifstream
+
+    file(filename);
+
+    if (!file.is_open()) {
+        std::cerr << "Error: Could not open file " << filename << std::endl;
+        exit(1);
+    }
+
+    std::string line;
+    while (std::getline(file, line)) {
+        uint64_t x = std::stoull(line);
+        input_combinations.push_back({x});
+    }
+
+    file.close();
+
+    std::cout << "Read " << input_combinations.size() << " input combinations from " << filename << std::endl;
+
+}
+    """
+  
     #===================================#
     # Generate C++ code for processing  #
     # N points per thread using OpenMP  #
@@ -182,8 +233,12 @@ void evaluate_circuit(std::vector<uint64_t>& output, uint64_t start_idx, uint64_
 }}
     """
 
-    def __generate_cpp_n_points_main(self, chunk_size: int = 10000) -> None:
+    def __generate_cpp_n_points_main(self, chunk_size: int = 10000, file_path: str = '.') -> None:
         """Generate main function with OpenMP parallel processing"""
+
+        # Get the path removing the file name
+        file_path = os.path.dirname(file_path)
+
         self.cpp_code += f"""
 int main(int argc, char* argv[]) {{
     const uint64_t num_inputs = {self.effective_inputs};  // Limited to 64 bits
@@ -214,8 +269,11 @@ int main(int argc, char* argv[]) {{
     const uint64_t batch_size = std::min(num_combinations, max_batch_size);
     const uint64_t num_batches = (num_combinations + batch_size - 1) / batch_size;
 
+    std::cout << "Num batches: " << num_batches << std::endl;
+
     // Allocate output vector
     std::vector<uint64_t> output(batch_size);
+    std::vector<uint64_t> results;
     
     // Start timer
     Timer timer("Total circuit evaluation");
@@ -232,16 +290,12 @@ int main(int argc, char* argv[]) {{
         
         // Option to save results to file if needed
         // To enable, uncomment the following code:
-        /*
-        std::string filename = "batch_" + std::to_string(batch) + "_results.bin";
-        std::ofstream outfile(filename, std::ios::binary);
-        if (outfile.is_open()) {{
-            outfile.write(reinterpret_cast<char*>(output.data()), (end_idx - start_idx) * sizeof(uint64_t));
-            outfile.close();
-            std::cout << "Saved results to " << filename << std::endl;
-        }}
-        */
+        results.insert(results.begin() + start_idx, output.begin(), output.end());
     }}
+
+    // Save results to file if needed
+    // To enable, uncomment the following code:
+    save_results("{file_path}/output.csv", results);
     
     return 0;
 }}
@@ -300,8 +354,11 @@ void evaluate_circuit(std::vector<int>& output, uint64_t start_idx, uint64_t end
         
         self.cpp_code += "    }\n}\n\n"
 
-    def __generate_cpp_main(self) -> None:
+    def __generate_cpp_main(self, file_path:str = '.') -> None:
         """Create the main function with improved memory management and OpenMP parallelism"""
+
+        file_path = os.path.dirname(file_path)
+
         self.cpp_code += f"""
 int main(int argc, char* argv[]) {{
     // Calculate number of input combinations
@@ -330,6 +387,7 @@ int main(int argc, char* argv[]) {{
     
     // Allocate output vector
     std::vector<int> output(batch_size);
+    std::vector<int> results;
     
     // Start timer
     Timer timer("Total circuit evaluation");
@@ -346,16 +404,12 @@ int main(int argc, char* argv[]) {{
         
         // Option to save results to file if needed
         // To enable, uncomment the following code:
-        /*
-        std::string filename = "batch_" + std::to_string(batch) + "_results.bin";
-        std::ofstream outfile(filename, std::ios::binary);
-        if (outfile.is_open()) {{
-            outfile.write(reinterpret_cast<char*>(output.data()), (end_idx - start_idx) * sizeof(int));
-            outfile.close();
-            std::cout << "Saved results to " << filename << std::endl;
-        }}
-        */
+        results.insert(results.end(), output.begin(), output.end());
     }}
+
+    // Save results to file if needed
+    // To enable, uncomment the following code:
+    // save_results("{file_path}/output.csv", results);
     
     return 0;
 }}
@@ -649,6 +703,7 @@ int main(int argc, char* argv[]) {{
     
     // Save all results
     std::cout << std::endl << "Saving results..." << std::endl;
+    save_results("{file_path}/output.csv", output);
     std::ofstream results_file("{file_path}/results.csv");
     if (results_file.is_open()) {{
         results_file << "thread_index,match_count" << std::endl;
@@ -704,7 +759,7 @@ int main(int argc, char* argv[]) {{
         self.__generate_cpp_main_pruned(p_vector_path, file_path)
         return self.cpp_code
     
-    def generate_code(self, chunk_size: int = 10000) -> str:
+    def generate_code(self, chunk_size: int = 10000, file_path:str = '.') -> str:
         """
         Generate the C++ OpenMP code for the LUT evaluation.
 
@@ -719,11 +774,12 @@ int main(int argc, char* argv[]) {{
             The generated C++ code.
         """
         self.__generate_cpp_header()
+        self.__generate_auxiliary_functions()
         self.__generate_cpp_standard_function()
-        self.__generate_cpp_main()
+        self.__generate_cpp_main(file_path)
         return self.cpp_code
     
-    def generate_n_points_code(self, chunk_size: int = 10000) -> str:
+    def generate_n_points_code(self, chunk_size: int = 10000, file_path:str = '.') -> str:
         """
         Generate the C++ OpenMP code for processing N points in parallel.
 
@@ -738,10 +794,10 @@ int main(int argc, char* argv[]) {{
             The generated C++ code.
         """
         self.__generate_cpp_header()
+        self.__generate_auxiliary_functions()
         self.__generate_cpp_n_points_function(chunk_size)
-        self.__generate_cpp_n_points_main(chunk_size)
+        self.__generate_cpp_n_points_main(chunk_size, file_path)
         return self.cpp_code
-    
     
     def write_code(self, file_path: str) -> str:
         """
@@ -760,7 +816,8 @@ int main(int argc, char* argv[]) {{
     def run(self, file_path:str ,
             method:str = "1_point", 
             chunk_size:int = 10000,
-            prune_vector:str = "pruning_vectors.csv") -> str:
+            prune_vector:str = "pruning_vectors.csv",
+            save_output:bool = False) -> str:
         """
         Generate and save the C++ code for the LUT evaluation.
 
@@ -775,9 +832,9 @@ int main(int argc, char* argv[]) {{
         """
 
         if method == "1_point":
-            self.generate_code(chunk_size)
+            self.generate_code(chunk_size, file_path, save_output)
         elif method == "n_points":
-            self.generate_n_points_code(chunk_size)
+            self.generate_n_points_code(chunk_size, file_path)
         elif method == "pruned":
             self.generate_pruned_code(prune_vector)
         else:

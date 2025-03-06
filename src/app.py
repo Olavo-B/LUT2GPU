@@ -16,6 +16,7 @@ import argparse
 from codegen.sumConstructor import RippleAdderGenerator
 from ultils.runScripts import RunScripts
 from ultils.runMethods import RunMethods
+from ultils.style import Mensage
 
 def parse_arguments():
     """
@@ -67,8 +68,8 @@ def parse_arguments():
     parser.add_argument(
         '--method', '-m', 
         type=str, 
-        default='1_point', 
-        help='Method to run (default: 1_point)')
+        default='n_points', 
+        help='Method to run (default: n_points)')
     
 
     
@@ -92,6 +93,11 @@ def main():
     # Ensure output directories exist
     os.makedirs(os.path.join(PATH, 'verilog'), exist_ok=True)
     os.makedirs(os.path.join(PATH, 'cuda'), exist_ok=True)
+    os.makedirs(os.path.join(PATH, 'cpp'), exist_ok=True)
+    os.makedirs(os.path.join(PATH, 'verilator'), exist_ok=True)
+
+    mensage = Mensage()
+    mensage.title()
 
     try:
         # Generate the sum
@@ -118,6 +124,7 @@ def main():
             verilog_path=os.path.join(PATH, 'verilog', 'somador.v'), 
             debug=args.debug
         )
+        
         print("\n🚀 Running CUDA Simulation:")
         runner.run_cuda(
                 cuda_path=os.path.join(PATH, 'cuda'), 
@@ -127,11 +134,20 @@ def main():
                 method=args.method, 
                 profile=args.profile
             )
+
         
-        # runner.run_verilator(
-        #     verilator_path=os.path.join(PATH, 'verilator'),
-        #     num_runs=args.num_runs,
-        # )
+        print("\n🧩 Running CPU Simulation:")
+        runner.run_cpu(
+            cpu_path=os.path.join(PATH, 'cpp'), 
+            num_runs=args.num_runs,
+            method=args.method        
+        )
+        
+        print("\n🔬 Running Verilator Simulation:")
+        runner.run_verilator(
+            verilator_path=os.path.join(PATH, 'verilator'), 
+            num_runs=args.num_runs
+        )
         runner.analyze_results()
 
     except Exception as e:
