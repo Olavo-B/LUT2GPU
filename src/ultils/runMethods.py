@@ -26,7 +26,7 @@ from codegen.testbenchConstructor import VerilogTestbenchGenerator
 class RunMethods:
     """
     A class to manage and profile different implementations of circuit evaluation.
-    Supports CUDA, Iverilog, and Verilator implementations with comprehensive
+    Supports CUDA, Iverilog, Verilator and OpenMP implementations with comprehensive
     performance analysis.
     """
     
@@ -70,7 +70,7 @@ class RunMethods:
             str: Path to created folder
         """
         base_path = f'{folder_path}'
-        subdirs = ['cuda', 'verilog', 'verilator','cpp']
+        subdirs = ['cuda', 'verilog', 'verilator', 'cpp', 'data']
         
         for subdir in [base_path] + [f"{base_path}/{d}" for d in subdirs]:
             if not os.path.exists(subdir):
@@ -224,10 +224,10 @@ class RunMethods:
     # csv file, this section is temporary and will be removed in the future.
     #==========================================================================#
 
-    def __generate_input_data(self, PATH: str, percentage: int, 
+    def __generate_p_distribution(self, PATH: str, percentage: int, 
                             thread_per_block: int = 256, 
                             blocks_per_grid: int = 768):
-        """Generate input data with specified percentage of 1s."""
+        """Generate probabilistic data with specified percentage of 1s."""
 
 
         # Size = (num_thread, num_intermediary_nodes)
@@ -252,6 +252,44 @@ class RunMethods:
         df.to_csv(PATH, index=False, header=False)
 
     #==========================================================================#
+    # 2025-03-07 11:11:11
+    # Generate the input data for the methods when the input data is not
+    # necessary, this section is temporary and will be removed in the future.
+    #==========================================================================#
+
+    def __find_input_file(self):
+        """Find the input file in the PATH directory."""
+        for file in os.listdir(f'{self.folder_path}/data'):
+            if file.endswith(".csv"):
+                return file
+        return
+
+    def __generate_input(self, max_inputs: int):
+        """Generate input data for the methods."""
+
+        # Check if the input file already exists
+        input_file = self.__find_input_file()
+        if input_file:
+            self.mensage.info(f"Input file found: {input_file}")
+            return
+        PATH = f'{self.folder_path}/data/x_test.csv'
+
+        # Size = (num_combinations, num_inputs)
+        rows = 2 ** len(self.graph.inputs) if len(self.graph.inputs) < max_inputs else 2 ** max_inputs
+        cols = len(self.graph.inputs)
+
+        # Create a matrix of zeros
+        matrix = np.zeros((rows, cols), dtype=int)
+
+        # Generate sequential binary numbers
+        for i in range(rows):
+            binary = bin(i)[2:].zfill(cols)
+            matrix[i] = [int(d) for d in binary]
+
+        # Save the matrix to a CSV file
+        df = pd.DataFrame(matrix)
+        df.to_csv(PATH, index=False, header=False)
+
 
 
     #================#
@@ -271,17 +309,21 @@ class RunMethods:
         self.mensage.info(f"• Chunk size: {chunk_size}")
 
         if method == 'pruned':
-            self.__generate_input_data(PATH = f'{cpu_path}/p_vector.csv', 
+            self.__generate_p_distribution(PATH = f'{cpu_path}/p_vector.csv', 
                                     percentage=probability, 
                                     thread_per_block=256, 
                                     blocks_per_grid=768)
+    
+        
+        # 2025-03-07 11:11:11
+        # Generate input data
+        # Root folder -> data -> csv
+        self.__generate_input(max_inputs=30)
 
         # Generate CPU code
         if self.debug: self.mensage.debug(f"Generating CPU code in {cpu_path}")
         exe_path = f'{cpu_path}/circuit_evaluator.cpp'
-        cpu_gen = CppGenerator(self.G,
-                               max_inputs=30)
-        
+        cpu_gen = CppGenerator(self.G, max_inputs=30)
         exe_path = cpu_gen.run(exe_path, method=method)
 
         # Compile CPU code
@@ -341,16 +383,19 @@ class RunMethods:
         # The input data is created just if the method is 'pruned', 
         # otherwise the input data is not necessary
         if method == 'pruned':
-            self.__generate_input_data(PATH = f'{cuda_path}/p_vector.csv', 
+            self.__generate_p_distribution(PATH = f'{cuda_path}/p_vector.csv', 
                                     percentage=probability, 
                                     thread_per_block=threads_per_block, 
                                     blocks_per_grid=blocks_per_grid)
+        
+        # 2025-03-07 11:11:11
+        # Generate input data
+        self.__generate_input(max_inputs=30)
 
         # Generate CUDA code
         if self.debug: self.mensage.debug(f"Generating CUDA code im {cuda_path} ")
         exe_path = f'{cuda_path}/circuit_evaluator.cu'
-        cuda_gen = CudaGenerator(self.G,
-                                 max_inputs=30)
+        cuda_gen = CudaGenerator(self.G, max_inputs=30) # 2025-02-19 13:34:30: TODO - Find a wall to input number of samples
         
         exe_path = cuda_gen.run(exe_path, method=method, 
                                 num_blocks=blocks_per_grid,

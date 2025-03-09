@@ -35,7 +35,7 @@ class CudaGenerator():
     - cuda_code: str
         The generated CUDA code.
     """
-    def __init__(self, graph:nx.DiGraph, max_inputs:int = 64, max_outputs:int = 64):
+    def __init__(self, graph:nx.DiGraph, max_inputs:int = 64, max_outputs:int = 64, n_samples:int = 10000):
         self.mensage = Mensage()
         
         self.G = graph
@@ -44,6 +44,7 @@ class CudaGenerator():
         self.intermediary = [node for node, data in self.G.nodes(data=True) if data.get('type') == 'intermediary']
         self.num_inputs = len(self.inputs)
         self.num_outputs = len(self.outputs)
+        self.n_samples = n_samples
 
         self.ordered_nodes = list(nx.topological_sort(self.G))
         self.cuda_code = ""
@@ -122,7 +123,7 @@ void save_results(unsigned long long *h_output, int totalThreads, const char* fi
     printf("Results saved to %s\\n", filename);
 }
 
-void read_input_combinations(int **h_input, int num_combinations, int num_inputs, const char* filename) {
+void read_input_combinations(int *h_input,int num_inputs, int num_combinations, const char* filename) {
     FILE* file = fopen(filename, "r");
     if (!file) {
         printf("Error: Could not open file %s\\n", filename);
@@ -131,19 +132,32 @@ void read_input_combinations(int **h_input, int num_combinations, int num_inputs
 
     char line[1024];
     int idx = 0;
+
+    // Skip header if exists
+    fgets(line, sizeof(line), file);
+
+    // Read data lines
     while (fgets(line, sizeof(line), file) && idx < num_combinations) {
-        h_input[idx] = (int*)malloc(num_inputs * sizeof(int));
-        char* token = strtok(line, ",");
-        int i = 0;
-        while (token && i < num_inputs) {
-            h_input[idx][i] = atoi(token);
+        char *token = strtok(line, ",");
+        int col = 0;
+
+        while (token && col < num_inputs) {
+            h_input[idx * num_inputs + col] = atoi(token);
             token = strtok(NULL, ",");
-            i++;
+            col++;
         }
+
         idx++;
     }
+    
 
     fclose(file);
+
+    if (idx < num_combinations) {
+        printf("Warning: File contains fewer combinations (%d) than expected (%d)\\n", idx, num_combinations);
+    }
+
+    printf("Read %d input combinations from %s\\n", idx, filename);
 }
     
         """
@@ -165,11 +179,9 @@ void read_input_combinations(int **h_input, int num_combinations, int num_inputs
     def __generate_input_assignments(self) -> str:
         """Generate input assignments limited to 64 bits"""
         code = "\n        // Set input values\n"
-        for i, input_var in enumerate(reversed(self.inputs[:self.effective_inputs])):
-            code += f"        {input_var} = (x >> {i}) & 1ULL;\n"
-        # Set remaining inputs to 0
-        for input_var in reversed(self.inputs[self.effective_inputs:]):
-            code += f"        {input_var} = 0;\n"
+        # 2025-03-07 11:02:18: Change input variable assignments to use a vector
+        for i, input_var in enumerate(reversed(self.inputs)):
+            code += f"        {input_var} = input[x + {i}] & 1ULL;\n"
         return code
 
     def __generate_circuit_evaluation(self) -> str:
@@ -193,7 +205,7 @@ void read_input_combinations(int **h_input, int num_combinations, int num_inputs
     def __generate_cuda_n_points_kernel(self, points_per_thread: int = 10000) -> None:
         """Generate CUDA kernel for processing N points per thread with 64-bit limitation"""
         self.cuda_code += f"""
-    __global__ void evaluate_circuit(unsigned long long *output, unsigned long long start_idx, unsigned long long end_idx, int points_per_thread) {{
+    __global__ void evaluate_circuit(unsigned long long *output,int *input, int num_combinations, unsigned long long start_idx, unsigned long long end_idx, int points_per_thread) {{
         unsigned long long base_idx = blockIdx.x * blockDim.x + threadIdx.x;
         {self.__generate_variable_declarations()}
         unsigned long long result = 0;
@@ -205,7 +217,7 @@ void read_input_combinations(int **h_input, int num_combinations, int num_inputs
             unsigned long long idx = base_idx * points_per_thread + point + start_idx;
             if (idx >= end_idx) return;
             
-            unsigned long long x = idx;
+            unsigned long long x = idx * num_combinations;
             {self.__generate_input_assignments()}
             {self.__generate_circuit_evaluation()}
             {self.__generate_output_assignments()}
@@ -224,8 +236,8 @@ void read_input_combinations(int **h_input, int num_combinations, int num_inputs
 
         self.cuda_code += f"""
     int main() {{
-        const unsigned int num_inputs = {self.effective_inputs};  // Limited to 64 bits
-        const unsigned long long num_combinations = 1ULL << num_inputs;
+        const unsigned int num_inputs = {self.num_inputs};
+        const unsigned long long num_combinations = {self.n_samples}; // Number of samples
         
         const int threadsPerBlock = {threads_per_block};
         const int numSMs = 24;  // For RTX 4060
@@ -239,7 +251,6 @@ void read_input_combinations(int **h_input, int num_combinations, int num_inputs
         // const unsigned long long numLaunches = 1;
         
         printf("Using %d least significant input bits\\n", num_inputs);
-        printf("Using %d least significant output bits\\n", {self.effective_outputs});
         printf("Points per thread: %d\\n", pointsPerThread);
         printf("Threads per block: %d\\n", threadsPerBlock);
         printf("Blocks per grid: %d\\n", optimalBlocks);
@@ -263,6 +274,12 @@ void read_input_combinations(int **h_input, int num_combinations, int num_inputs
         CHECK_CUDA_ERROR(cudaEventRecord(start));
 
         std::vector<unsigned long long> h_all_output(num_combinations);
+        std::vector<int> h_input(num_combinations * num_inputs);
+        read_input_combinations(h_input.data(), num_inputs, num_combinations, "{file_path}/x_tests.csv");
+
+        int *d_input;
+        CHECK_CUDA_ERROR(cudaMalloc(&d_input, num_combinations * num_inputs * sizeof(int)));
+        CHECK_CUDA_ERROR(cudaMemcpy(d_input, h_input.data(), num_combinations * num_inputs * sizeof(int), cudaMemcpyHostToDevice));
         
         for (unsigned long long i = 0; i < numLaunches; i++) {{
             unsigned long long start_idx = i * pointsPerLaunch;
@@ -272,7 +289,7 @@ void read_input_combinations(int **h_input, int num_combinations, int num_inputs
             CHECK_CUDA_ERROR(cudaMemset(d_output, 0, outputSizePerLaunch));
             
             evaluate_circuit<<<optimalBlocks, threadsPerBlock>>>(
-                d_output, start_idx, end_idx, pointsPerThread
+                d_output, d_input, num_combinations, start_idx, end_idx, pointsPerThread
             );
             
             cudaError_t kernelError = cudaGetLastError();
