@@ -132,17 +132,6 @@ def main():
     os.makedirs(os.path.join(PATH, 'verilog'), exist_ok=True)
     os.system(f"cp {args.verilog} {os.path.join(PATH, 'verilog')}")
 
-    # Move .csv input file to the correct path
-    os.makedirs(os.path.join(PATH, 'data'), exist_ok=True)
-    # Get root folder of benchmark
-    benchmark = os.path.dirname(args.verilog)
-    for file in os.listdir(benchmark):
-        if file.endswith(".csv"):
-            input = os.path.join(benchmark, file)
-            break
-    os.system(f"cp {input} {os.path.join(PATH, 'cuda')}")
-
-
 
     mensage = Mensage()
     mensage.title()

@@ -90,6 +90,10 @@ class RunScripts():
         
             stdout, stderr = process.communicate()  # Captura a saída e o erro
 
+            if self.debug:
+                self.mensage.info(f"Yosys-ABC output:")
+                print(stdout.decode('utf-8'))
+
             self.mensage.success(f"ABC finished...saved at {self.path}/abc_script.rc")
 
         except subprocess.CalledProcessError as e:
