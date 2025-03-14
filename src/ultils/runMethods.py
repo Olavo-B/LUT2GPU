@@ -45,6 +45,7 @@ class RunMethods:
 
         self.graph = Graph(blif_path, verilog_path, debug=debug) # Graph object
         self.G = self.graph.graph # NetworkX graph object
+        self.graph.save_graph(name) #Save the graph to a file
         self.folder_path = self.__create_folder(name)
 
         # Generate testbench for Verilog module
@@ -251,8 +252,6 @@ class RunMethods:
         df = pd.DataFrame(matrix)
         df.to_csv(PATH, index=False, header=False)
 
-    #==========================================================================#
-
 
     #================#
     # Public methods #
@@ -335,8 +334,6 @@ class RunMethods:
         self.mensage.info(f"• Probability: {probability}")
         
 
-        # 2025-02-19 13:34:30: Generate input data
-        # TODO: Remove this section in the future, due the estocaistic nature of the input data
         # 2025-02-25 15:31:32: 
         # The input data is created just if the method is 'pruned', 
         # otherwise the input data is not necessary
@@ -350,7 +347,7 @@ class RunMethods:
         if self.debug: self.mensage.debug(f"Generating CUDA code im {cuda_path} ")
         exe_path = f'{cuda_path}/circuit_evaluator.cu'
         cuda_gen = CudaGenerator(self.G,
-                                 max_inputs=30)
+                                 max_inputs=15)
         
         exe_path = cuda_gen.run(exe_path, method=method, 
                                 num_blocks=blocks_per_grid,

@@ -9,9 +9,11 @@
 # /*****************************************************************************/
 
 
+from pyvis import  network as net
 import matplotlib.pyplot as plt
 from itertools import product
 import networkx as nx
+import json
 import os
 import re
 
@@ -418,3 +420,31 @@ class Graph():
             if node in equations.keys():
                 self.G.nodes[node]['equation'] = equations[node]['equation']
                 self.G.nodes[node]['operations'] = equations[node]['operations']
+
+    #====================#
+    # Public Methods     #
+    #====================#
+
+    # Graph visualization with Pyvis
+    def graph_visu(self, path):
+        # Make a .html for download (nt.show() has some kind of problem on Colab)
+        nt = net.Network(directed=True)
+        nt.from_nx(self.G)
+        nt.save_graph(f'{path}/digraph_visualization.html')
+        
+    def save_graph(self, path:str) -> None:
+        """
+        Save the graph to a file.
+
+        Args:
+        -------
+        A string representing the path to save the graph."
+        
+        """
+        f = json.dumps(nx.node_link_data(self.G))
+        with open(f'{path}/graph.json', 'w') as file:
+            file.write(f)
+        if self.G.number_of_nodes() < 500:
+            self.graph_visu(path)
+
+        self.mensage.success(f"Graph saved successfully to {path}!")
