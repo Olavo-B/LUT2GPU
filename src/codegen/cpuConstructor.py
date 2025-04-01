@@ -72,7 +72,7 @@ class CppGenerator():
     #  Private Methods   #
     #====================#
     
-    def __generate_cpp_header(self) -> None:
+    def __cpp_header(self) -> None:
         """Generate C++ header with OpenMP includes and common utilities"""
         self.cpp_code = """
 #include <iostream>
@@ -83,6 +83,7 @@ class CppGenerator():
 #include <fstream>
 #include <algorithm>
 #include <random>
+#include <cstdlib> // For rand()
 #include <omp.h>
 
 // Utility function for timing
@@ -99,12 +100,12 @@ public:
     ~Timer() {
         auto end_time = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
-        std::cout << operation_name << " execution time: " << duration << " milliseconds" << std::endl;
+        std::cout << operation_name << " Execution time: " << duration << " milliseconds" << std::endl;
     }
 };
         """
 
-    def __generate_auxiliary_functions(self) -> None:
+    def __auxiliary_functions(self) -> None:
         """
         Generate the auxiliary functions for the CUDA code.
         In this case, it includes:
@@ -154,21 +155,126 @@ void read_input_combinations(const std::string& filename, std::vector<std::vecto
 
 }
     """
+        
+    
+    #===================================#
+    # 2025-03-29 13:05:45               #
+    # New method to generate inputs     #
+    # randomly using curand and         #
+    # evaluate 32 bits at a time        #
+    #===================================#
+
+    def __input_assignments_random(self) -> str:
+        """
+        Generate input assignments using curand for random inputs.
+        """
+        code = "\n        // Set input values\n"
+        for i, input_var in enumerate(reversed(self.inputs)):
+            code += f"        {input_var} = rand_r(&seed);\n"
+        return code
+    
+    def __output_assignments_random(self) -> str:
+        """
+        Generate output assignments using curand for random inputs.
+        """
+        code = "\n        // Store result for this point\n"
+        code += "        soma = 0;\n"
+        for i, output in enumerate(self.outputs):
+            code += f"        soma ^= {output};\n"
+        return code
+
+    def __circuit_evaluation_random(self) -> str:
+        """
+        Generate circuit evaluation code using curand for random inputs.
+        """
+        code = "\n        // Evaluate circuit in topological order\n"
+        for node in self.ordered_nodes:
+            if node not in self.inputs:
+                equation = self.G.nodes[node].get('equation_bitwise')
+                if equation is not None:
+                    code += f"        {node} = ({equation});\n"
+        return code
+    
+    def __cpp_kernel_random(self) -> None:
+        """Generate the kernel function for random input generation"""
+        self.cpp_code += f"""
+void evaluate_circuit(std::vector<uint32_t>& output, const int chunk_size, const int num_inputs) {{
+    // Use OpenMP to parallelize computation
+    #pragma omp parallel
+    {{
+        {self.__variable_declarations()}
+        unsigned int result = 0;
+        unsigned int soma;
+
+        int base_idx = omp_get_thread_num();
+        unsigned int seed = num_inputs;
+
+        // Process chunks of points in parallel
+        for (int i = 0; i < chunk_size; i++){{
+        
+            {self.__input_assignments_random()}
+            {self.__circuit_evaluation_random()}
+            {self.__output_assignments_random()}
+
+            // Store the result in the correct position
+            output[base_idx + i] = result;
+
+        }}
+
+
+    }}
+}}
+
+"""
+
+    def __cpp_main_random(self, points_per_thread:int = 4096, file_path:str = '.') -> None:
+        """Generate main function with OpenMP parallel processing and random input generation"""
+        file_path = os.path.dirname(file_path)
+        
+        self.cpp_code += f"""
+int main(int argc, char* argv[]) {{
+    const uint32_t num_inputs = {self.num_inputs}; // Limited to 64 bits
+
+    // Determine number of threads and chunk size
+    int num_threads = omp_get_max_threads();
+    int chunk_size = 4194304;
+    // Process command line arguments if provided
+    omp_set_num_threads(num_threads);
+
+    std::cout << "Circuit Evaluation on CPU with OpenMP" << std::endl;
+    std::cout << "Using " << num_inputs << " least significant input bits" << std::endl;
+    std::cout << "Using " << 32 << " least significant output bits" << std::endl;
+    std::cout << "Number of threads: " << num_threads << std::endl;
+    std::cout << "Chunk size: " << chunk_size << std::endl;
+    std::cout << "Total combinations to evaluate: " << 32 * num_threads * chunk_size << std::endl;
+
+    std::vector<uint32_t> output(32 * num_threads * chunk_size);
+
+    // Start timer
+    Timer timer("Total circuit evaluation");
+
+    // Evaluate circuit for this batch
+    evaluate_circuit(output, chunk_size, num_inputs);
+
+    return 0;
+}}
+        """
+
   
     #===================================#
     # Generate C++ code for processing  #
     # N points per thread using OpenMP  #
     #===================================#
 
-    def __generate_variable_declarations(self) -> str:
+    def __variable_declarations(self) -> str:
         """Generate variable declarations for all circuit nodes"""
         code = "\n        // Initialize all variables\n"
         all_nodes = set(self.G.nodes())
         for node in all_nodes:
-            code += f"    int {node} = 0;\n"
+            code += f"    unsigned int {node};\n"
         return code
 
-    def __generate_input_assignments(self) -> str:
+    def __input_assignments(self) -> str:
         """Generate input assignments limited to 64 bits"""
         code = "\n        // Set input values\n"
         for i, input_var in enumerate(reversed(self.inputs[:self.effective_inputs])):
@@ -178,7 +284,7 @@ void read_input_combinations(const std::string& filename, std::vector<std::vecto
             code += f"        {input_var} = 0;\n"
         return code
 
-    def __generate_circuit_evaluation(self) -> str:
+    def __circuit_evaluation(self) -> str:
         """Generate circuit evaluation code"""
         code = "\n        // Evaluate circuit in topological order\n"
         for node in self.ordered_nodes:
@@ -190,7 +296,7 @@ void read_input_combinations(const std::string& filename, std::vector<std::vecto
                     code += f"        {node} = ({cpp_equation});\n"
         return code
 
-    def __generate_output_assignments(self) -> str:
+    def __output_assignments(self) -> str:
         """Generate output assignments limited to 64 bits"""
         code = "\n        // Store result for this point\n"
         code += "        result = 0;\n"
@@ -198,7 +304,7 @@ void read_input_combinations(const std::string& filename, std::vector<std::vecto
             code += f"        result |= ((uint64_t){output} & 1ULL) << {i};\n"
         return code
 
-    def __generate_cpp_n_points_function(self, chunk_size: int = 10000) -> None:
+    def __cpp_n_points_function(self, chunk_size: int = 10000) -> None:
         """Generate C++ function for processing N points in parallel with OpenMP"""
         self.cpp_code += f"""
 void evaluate_circuit(std::vector<uint64_t>& output, uint64_t start_idx, uint64_t end_idx, int chunk_size) {{
@@ -213,18 +319,17 @@ void evaluate_circuit(std::vector<uint64_t>& output, uint64_t start_idx, uint64_
     // Use OpenMP to parallelize computation
     #pragma omp parallel
     {{
-        {self.__generate_variable_declarations()}
+        {self.__variable_declarations()}
         uint64_t result = 0;
         
         // Process chunks of points in parallel
-        #pragma omp for schedule(dynamic, chunk_size)
         for (uint64_t i = 0; i < num_points; i++) {{
             uint64_t idx = start_idx + i;
             uint64_t x = idx;
             
-            {self.__generate_input_assignments()}
-            {self.__generate_circuit_evaluation()}
-            {self.__generate_output_assignments()}
+            {self.__input_assignments()}
+            {self.__circuit_evaluation()}
+            {self.__output_assignments()}
             
             // Store the result
             output[i] = result;
@@ -233,7 +338,7 @@ void evaluate_circuit(std::vector<uint64_t>& output, uint64_t start_idx, uint64_
 }}
     """
 
-    def __generate_cpp_n_points_main(self, chunk_size: int = 10000, file_path: str = '.') -> None:
+    def __cpp_n_points_main(self, chunk_size: int = 10000, file_path: str = '.', save_output:bool=False) -> None:
         """Generate main function with OpenMP parallel processing"""
 
         # Get the path removing the file name
@@ -290,12 +395,12 @@ int main(int argc, char* argv[]) {{
         
         // Option to save results to file if needed
         // To enable, uncomment the following code:
-        results.insert(results.begin() + start_idx, output.begin(), output.end());
+        {'results.insert(results.begin() + start_idx, output.begin(), output.end());' if save_output else ''}
     }}
 
     // Save results to file if needed
     // To enable, uncomment the following code:
-    save_results("{file_path}/output.csv", results);
+    {f'save_results("{file_path}/output.csv", results);' if save_output else ''}
     
     return 0;
 }}
@@ -306,7 +411,7 @@ int main(int argc, char* argv[]) {{
     # one point per thread with OpenMP  #
     #===================================#
 
-    def __generate_cpp_standard_function(self) -> None:
+    def __cpp_standard_function(self) -> None:
         """Create the C++ function for the LUT evaluation with OpenMP"""
         self.cpp_code += """
 void evaluate_circuit(std::vector<int>& output, uint64_t start_idx, uint64_t end_idx) {
@@ -354,7 +459,7 @@ void evaluate_circuit(std::vector<int>& output, uint64_t start_idx, uint64_t end
         
         self.cpp_code += "    }\n}\n\n"
 
-    def __generate_cpp_main(self, file_path:str = '.') -> None:
+    def __cpp_main(self, file_path:str = '.') -> None:
         """Create the main function with improved memory management and OpenMP parallelism"""
 
         file_path = os.path.dirname(file_path)
@@ -420,7 +525,7 @@ int main(int argc, char* argv[]) {{
     # Convert the CUDA implementation to OpenMP for CPU                         #
     #===========================================================================#
 
-    def __generate_cpp_auxiliary_functions_pruned(self) -> None:
+    def __cpp_auxiliary_functions_pruned(self) -> None:
         """Generate the auxiliary functions for pruned circuits on CPU"""
         self.cpp_code += f"""
 // Function to count bits that differ between two values (Hamming distance)
@@ -525,7 +630,7 @@ void read_pruning_vectors(const std::string& filename, std::vector<int>& p_vecto
 }}
         """
 
-    def __generate_cpp_pruned_function(self) -> None:
+    def __cpp_pruned_function(self) -> None:
         """Generate the OpenMP function for the pruned circuits"""
         self.cpp_code += f"""
 void evaluate_circuit_pruned(const std::vector<int>& input, int inputsize,
@@ -623,7 +728,7 @@ void evaluate_circuit_pruned(const std::vector<int>& input, int inputsize,
 }
         """
 
-    def __generate_cpp_main_pruned(self, p_vector_path:str = "pruning_vectors.csv", 
+    def __cpp_main_pruned(self, p_vector_path:str = "pruning_vectors.csv", 
                                 file_path:str = '.') -> None:
         # Get the path removing the file name
         file_path = os.path.dirname(file_path)
@@ -736,6 +841,26 @@ int main(int argc, char* argv[]) {{
     # Public Methods     #
     #====================#
 
+    def generate_random_code(self, points_per_thread:int = 4096, file_path:str = '.') -> str:
+        """
+        Generate the C++ OpenMP code for the LUT evaluation with random inputs.
+
+        Args:
+        ------
+        - points_per_thread: int
+            The number of points to process in each OpenMP thread.
+        
+        Returns:
+        --------
+        - str
+            The generated C++ code.
+        """
+        self.__cpp_header()
+        self.__auxiliary_functions()
+        self.__cpp_kernel_random()
+        self.__cpp_main_random(points_per_thread, file_path)
+        return self.cpp_code
+
     def generate_pruned_code(self, p_vector_path:str = "pruning_vectors.csv",
                           file_path:str = '.') -> str:
         """
@@ -753,10 +878,10 @@ int main(int argc, char* argv[]) {{
         - str
             The generated C++ code.
         """
-        self.__generate_cpp_header()
-        self.__generate_cpp_auxiliary_functions_pruned()
-        self.__generate_cpp_pruned_function()
-        self.__generate_cpp_main_pruned(p_vector_path, file_path)
+        self.__cpp_header()
+        self.__cpp_auxiliary_functions_pruned()
+        self.__cpp_pruned_function()
+        self.__cpp_main_pruned(p_vector_path, file_path)
         return self.cpp_code
     
     def generate_code(self, chunk_size: int = 10000, file_path:str = '.') -> str:
@@ -773,13 +898,13 @@ int main(int argc, char* argv[]) {{
         - str
             The generated C++ code.
         """
-        self.__generate_cpp_header()
-        self.__generate_auxiliary_functions()
-        self.__generate_cpp_standard_function()
-        self.__generate_cpp_main(file_path)
+        self.__cpp_header()
+        self.__auxiliary_functions()
+        self.__cpp_standard_function()
+        self.__cpp_main(file_path)
         return self.cpp_code
     
-    def generate_n_points_code(self, chunk_size: int = 10000, file_path:str = '.') -> str:
+    def generate_n_points_code(self, chunk_size: int = 10000, file_path:str = '.', save_output:bool = 'False') -> str:
         """
         Generate the C++ OpenMP code for processing N points in parallel.
 
@@ -793,10 +918,10 @@ int main(int argc, char* argv[]) {{
         - str
             The generated C++ code.
         """
-        self.__generate_cpp_header()
-        self.__generate_auxiliary_functions()
-        self.__generate_cpp_n_points_function(chunk_size)
-        self.__generate_cpp_n_points_main(chunk_size, file_path)
+        self.__cpp_header()
+        self.__auxiliary_functions()
+        self.__cpp_n_points_function(chunk_size)
+        self.__cpp_n_points_main(chunk_size, file_path, save_output)
         return self.cpp_code
     
     def write_code(self, file_path: str) -> str:
@@ -815,7 +940,7 @@ int main(int argc, char* argv[]) {{
     
     def run(self, file_path:str ,
             method:str = "1_point", 
-            chunk_size:int = 10000,
+            chunk_size:int = 4046,
             prune_vector:str = "pruning_vectors.csv",
             save_output:bool = False) -> str:
         """
@@ -837,6 +962,8 @@ int main(int argc, char* argv[]) {{
             self.generate_n_points_code(chunk_size, file_path)
         elif method == "pruned":
             self.generate_pruned_code(prune_vector)
+        elif method == "random":
+            self.generate_random_code(chunk_size, file_path)
         else:
             self.mensage.error("Invalid evaluation method. Use '1_point', 'n_points' or 'pruned'.")
         

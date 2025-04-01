@@ -70,7 +70,7 @@ class CudaGenerator():
     #  Private Methods   #
     #====================#
     
-    def __generate_cuda_header(self) -> None:
+    def __cuda_header(self) -> None:
         """Original header generation method with 64-bit types"""
         self.cuda_code = """
 #include <stdio.h>
@@ -80,6 +80,8 @@ class CudaGenerator():
 #include <random>
 #include <vector>
 #include <algorithm>
+#include <curand_kernel.h>
+
 
 
 // Utility function to check CUDA errors
@@ -93,7 +95,7 @@ class CudaGenerator():
         """
 
     #2025-02-27 14:12:11: New method to generate auxiliary functions
-    def __generate_cuda_auxiliary_functions(self) -> None:
+    def __cuda_auxiliary_functions(self) -> None:
         """
         Generate the auxiliary functions for the CUDA code.
         In this case, it includes:
@@ -105,7 +107,7 @@ class CudaGenerator():
         """
         
         self.cuda_code += """
-void save_results(unsigned long long *h_output, int totalThreads, const char* filename) {
+void save_results(unsigned int *h_output, int totalThreads, const char* filename) {
     FILE* file = fopen(filename, "w");
     if (!file) {
         printf("Error: Could not open file %s\\n", filename);
@@ -147,22 +149,17 @@ void read_input_combinations(int **h_input, int num_combinations, int num_inputs
 }
     
         """
-    #===================================#
-    # Generate CUDA code for processing #
-    # N points per thread with 64-bit   #
-    # limitation                        #
-    #===================================#
 
-    def __generate_variable_declarations(self) -> str:
+    def __variable_declarations(self) -> str:
         """Generate variable declarations using unsigned long long for large circuits"""
         code = "\n        // Initialize all variables\n"
         all_nodes = set(self.G.nodes())
         for node in all_nodes:
             # 2025-02-18 17:57:04: Change variable type to int
-            code += f"    int {node} = 0;\n"
+            code += f"    unsigned int {node};\n"
         return code
 
-    def __generate_input_assignments(self) -> str:
+    def __input_assignments(self) -> str:
         """Generate input assignments limited to 64 bits"""
         code = "\n        // Set input values\n"
         for i, input_var in enumerate(reversed(self.inputs[:self.effective_inputs])):
@@ -172,7 +169,7 @@ void read_input_combinations(int **h_input, int num_combinations, int num_inputs
             code += f"        {input_var} = 0;\n"
         return code
 
-    def __generate_circuit_evaluation(self) -> str:
+    def __circuit_evaluation(self) -> str:
         """Generate circuit evaluation code"""
         code = "\n        // Evaluate circuit in topological order\n"
         for node in self.ordered_nodes:
@@ -181,8 +178,8 @@ void read_input_combinations(int **h_input, int num_combinations, int num_inputs
                 if equation is not None:
                     code += f"        {node} = ({equation});\n"
         return code
-
-    def __generate_output_assignments(self) -> str:
+        
+    def __output_assignments(self) -> str:
         """Generate output assignments limited to 64 bits"""
         code = "\n        // Store result for this point\n"
         code += "        result = 0;\n"
@@ -190,12 +187,172 @@ void read_input_combinations(int **h_input, int num_combinations, int num_inputs
             code += f"        result |= ((unsigned long long){output} & 1ULL) << {i};\n"
         return code
 
-    def __generate_cuda_n_points_kernel(self, points_per_thread: int = 10000) -> None:
+    #===================================#
+    # 2025-03-29 12:11:30               #
+    # New method to generate inputs     #
+    # randomly using curand and         #
+    # evaluate 32 bits at a time        #
+    #===================================#
+
+    def __input_assignments_random(self) -> str:
+        """
+        Generate input assignments using curand for random inputs.
+        """
+        code = "\n        // Set input values\n"
+        for i, input_var in enumerate(reversed(self.inputs)):
+            code += f"        {input_var} = curand(&state);\n"
+        return code
+    
+    def __output_assignments_random(self) -> str:
+        """
+        Generate output assignments using curand for random inputs.
+        """
+        code = "\n        // Store result for this point\n"
+        code += "        soma = 0;\n"
+        for i, output in enumerate(self.outputs):
+            code += f"        soma ^= {output};\n"
+        return code
+    
+    def __circuit_evaluation_random(self) -> str:
+        """
+        Generate circuit evaluation code using curand for random inputs.
+        """
+        code = "\n        // Evaluate circuit in topological order\n"
+        for node in self.ordered_nodes:
+            if node not in self.inputs:
+                equation = self.G.nodes[node].get('equation_bitwise')
+                if equation is not None:
+                    code += f"        {node} = ({equation});\n"
+        return code
+
+    def __cuda_random_kernel(self) -> None:
+        """
+        Generate CUDA kernel for processing random inputs with no limitation on the number of bits.
+        """
+        self.cuda_code += f"""
+__global__ void evaluate_circuit(unsigned int *output, int points_per_thread, const int num_inputs) {{
+        
+    int base_idx = blockIdx.x * blockDim.x + threadIdx.x;
+    
+    // Initialize cuRAND
+    curandState state;
+    int seed = num_inputs;
+    curand_init(seed, base_idx, 0, &state);
+
+    {self.__variable_declarations()}
+    unsigned int soma;
+    unsigned int results = 0;
+
+    // Each thread processes points_per_thread points
+    for (int i = 0; i < points_per_thread; i++) {{
+            
+        {self.__input_assignments_random()}
+        {self.__circuit_evaluation_random()}
+        {self.__output_assignments_random()}
+
+        results ^= soma;
+            
+
+        output[base_idx + i] = results;
+            
+    }}
+}}
+
+    """
+
+    def __cuda_random_main(self, threads_per_block: int = 256, points_per_thread: int = 10000, file_path:str = '.', save_output:bool = True) -> None:
+        """
+        Generate main function with random inputs with no limitation on the number of bits.
+        """
+        # Get the path removing the file name
+        file_path = os.path.dirname(file_path)
+
+        self.cuda_code += f"""
+int main() {{
+    
+    const unsigned int num_inputs = {self.num_inputs}; 
+    
+    const int threadsPerBlock = {threads_per_block};
+    const int numSMs = 24;  // For RTX 4060
+    const int blocksPerSM = 32;
+    const int optimalBlocks = numSMs * blocksPerSM;
+    const int pointsPerThread = 171;
+    
+    const unsigned long long threadsPerLaunch = (unsigned long long)optimalBlocks * threadsPerBlock;
+    const unsigned long long pointsPerLaunch = threadsPerLaunch * pointsPerThread;
+
+    
+    printf("Using %d least significant input bits\\n", num_inputs);
+    printf("Using %d least significant output bits\\n", 32);
+    printf("Threads per block: %d\\n", threadsPerBlock);
+    printf("Blocks per grid: %d\\n", optimalBlocks);
+    printf("Points per thread: %d\\n", pointsPerThread);
+    printf("Total combinations to evaluate: %llu\\n", 32 * pointsPerLaunch);
+    
+    cudaEvent_t start, stop;
+    CHECK_CUDA_ERROR(cudaEventCreate(&start));
+    CHECK_CUDA_ERROR(cudaEventCreate(&stop));
+    
+    const size_t outputSizePerLaunch = pointsPerLaunch * sizeof(unsigned int);
+    unsigned int *h_output = (unsigned int*)malloc(outputSizePerLaunch);
+    
+    unsigned int *d_output;
+    CHECK_CUDA_ERROR(cudaMalloc(&d_output, outputSizePerLaunch));
+    CHECK_CUDA_ERROR(cudaMemset(d_output, 0, outputSizePerLaunch));
+    
+    CHECK_CUDA_ERROR(cudaEventRecord(start));
+    
+
+    
+    evaluate_circuit<<<optimalBlocks, threadsPerBlock>>>(
+        d_output, pointsPerThread, num_inputs);
+
+    
+    cudaError_t kernelError = cudaGetLastError();
+    if (kernelError != cudaSuccess) {{
+        printf("Kernel error: %s\\n", cudaGetErrorString(kernelError));
+        cudaFree(d_output);
+        free(h_output);
+        return 1;
+    }}
+
+        
+
+    
+    CHECK_CUDA_ERROR(cudaEventRecord(stop));
+    CHECK_CUDA_ERROR(cudaEventSynchronize(stop));
+    
+    float milliseconds ;
+    CHECK_CUDA_ERROR(cudaEventElapsedTime(&milliseconds, start, stop));
+    printf("GPU Execution time: %.3f milliseconds\\n", milliseconds);
+
+    //Save the first 100 results to CSV
+    CHECK_CUDA_ERROR(cudaMemcpy(h_output, d_output, outputSizePerLaunch, cudaMemcpyDeviceToHost));
+    save_results(h_output, 1000, "{file_path}/output.csv");
+    
+    free(h_output);
+    CHECK_CUDA_ERROR(cudaFree(d_output));
+    CHECK_CUDA_ERROR(cudaEventDestroy(start));
+    CHECK_CUDA_ERROR(cudaEventDestroy(stop));
+    
+    return 0;
+}}
+
+    """
+        
+    
+    #===================================#
+    # Generate CUDA code for processing #
+    # N points per thread with 64-bit   #
+    # limitation                        #
+    #===================================#
+
+    def __cuda_n_points_kernel(self, points_per_thread: int = 10000) -> None:
         """Generate CUDA kernel for processing N points per thread with 64-bit limitation"""
         self.cuda_code += f"""
     __global__ void evaluate_circuit(unsigned long long *output, unsigned long long start_idx, unsigned long long end_idx, int points_per_thread) {{
         unsigned long long base_idx = blockIdx.x * blockDim.x + threadIdx.x;
-        {self.__generate_variable_declarations()}
+        {self.__variable_declarations()}
         unsigned long long result = 0;
 
 
@@ -206,9 +363,9 @@ void read_input_combinations(int **h_input, int num_combinations, int num_inputs
             if (idx >= end_idx) return;
             
             unsigned long long x = idx;
-            {self.__generate_input_assignments()}
-            {self.__generate_circuit_evaluation()}
-            {self.__generate_output_assignments()}
+            {self.__input_assignments()}
+            {self.__circuit_evaluation()}
+            {self.__output_assignments()}
             
             // Store the result in the correct position
             output[base_idx * points_per_thread + point] = result;
@@ -216,7 +373,7 @@ void read_input_combinations(int **h_input, int num_combinations, int num_inputs
     }}
     """
 
-    def __generate_cuda_n_points_main(self, threads_per_block: int = 1024, points_per_thread: int = 10000, file_path:str = '.') -> None:
+    def __cuda_n_points_main(self, threads_per_block: int = 1024, points_per_thread: int = 10000, file_path:str = '.', save_output:bool = False) -> None:
         """Generate main function with N points per thread support and 64-bit limitation"""
 
         # Get the path removing the file name
@@ -283,12 +440,12 @@ void read_input_combinations(int **h_input, int num_combinations, int num_inputs
                 return 1;
             }}
             
-            CHECK_CUDA_ERROR(cudaMemcpy(h_all_output.data(), d_output, (end_idx - start_idx) * sizeof(unsigned long long), cudaMemcpyDeviceToHost));
+            {"CHECK_CUDA_ERROR(cudaMemcpy(h_all_output.data(), d_output, (end_idx - start_idx) * sizeof(unsigned long long), cudaMemcpyDeviceToHost));" if save_output else ''}
 
         }}
     
         // Save results to CSV
-        save_results(h_all_output.data(), num_combinations, "{file_path}/output.csv");
+        {f'save_results(h_all_output.data(), num_combinations, "{file_path}/output.csv");' if save_output else ''}
 
 
         
@@ -314,7 +471,7 @@ void read_input_combinations(int **h_input, int num_combinations, int num_inputs
     # limitation                        #
     #===================================#
 
-    def __generate_cuda_kernel(self) -> None:
+    def __cuda_kernel(self) -> None:
         """
         Create the CUDA kernel for the LUT evaluation.
 
@@ -366,7 +523,7 @@ void read_input_combinations(int **h_input, int num_combinations, int num_inputs
         
         self.cuda_code += "    }\n}\n\n"
 
-    def __generate_cuda_main(self, threads_per_block:int = 256, file_path:str = '.') -> None:
+    def __cuda_main(self, threads_per_block:int = 256, file_path:str = '.', save_output:bool = False) -> None:
         """
         Create the main function with improved memory management and error handling.
         """
@@ -444,11 +601,10 @@ void read_input_combinations(int **h_input, int num_combinations, int num_inputs
             }}
             
             // Copy results for this launch            
-            CHECK_CUDA_ERROR(cudaMemcpy(h_all_output + start_idx, h_output, outputSizePerLaunch, cudaMemcpyHostToHost));    
+            {"CHECK_CUDA_ERROR(cudaMemcpy(h_all_output + start_idx, h_output, outputSizePerLaunch, cudaMemcpyHostToHost));" if save_output else ''}   
         }}
 
-        // Save results to CSV
-        save_results(h_all_output, num_combinations, "{file_path}/output.csv");
+
         
         // Record stop time and calculate elapsed time
         CHECK_CUDA_ERROR(cudaEventRecord(stop));
@@ -457,6 +613,9 @@ void read_input_combinations(int **h_input, int num_combinations, int num_inputs
         float milliseconds = 0;
         CHECK_CUDA_ERROR(cudaEventElapsedTime(&milliseconds, start, stop));
         printf("GPU Execution time: %.3f milliseconds\\n", milliseconds);
+
+        // Save results to CSV
+        { f'save_results(h_all_output, num_combinations, "{file_path}/output.csv")'if save_output else ''};
         
         // Cleanup
         CHECK_CUDA_ERROR(cudaEventDestroy(start));
@@ -476,7 +635,7 @@ void read_input_combinations(int **h_input, int num_combinations, int num_inputs
     # https://excalidraw.com/#json=M1w6ra-W40Ku2GjYRafUr,3s59EjNpxx81gOY-lzxtDg #
     #===========================================================================#
 
-    def __generate_cuda_auxiliary_functions_pruned(self) -> None:
+    def __cuda_auxiliary_functions_pruned(self) -> None:
         """
         Generate the auxiliary functions for pruned circuits. 
         It includes the following functions:
@@ -580,7 +739,7 @@ void read_pruning_vectors(const char* filename, int* h_p_vector, int totalThread
 }}
         """
 
-    def __generate_cuda_kernel_pruned(self) -> None:
+    def __cuda_kernel_pruned(self) -> None:
         """
         Generate the CUDA kernel for the pruned circuits.
         """
@@ -615,8 +774,7 @@ void read_pruning_vectors(const char* filename, int* h_p_vector, int totalThread
         self.cuda_code += "\n        // Set input values\n"
         self.cuda_code += "        unsigned long long x = input[i];\n"
 
-        for i, input_var in enumerate(reversed(self.inputs)):
-            self.cuda_code += f"        {input_var} = (x >> {i}) & 1;\n"
+        self.cuda_code += self.__input_assignments()
 
         self.cuda_code += "\n        // Evaluate circuit in topological order\n"
 
@@ -637,8 +795,7 @@ void read_pruning_vectors(const char* filename, int* h_p_vector, int totalThread
 
         # 2025-02-19 17:50:15: Input variable assignments again due to new evaluation
 
-        for i, input_var in enumerate(reversed(self.inputs)):
-            self.cuda_code += f"        {input_var} = (x >> {i}) & 1;\n"
+        self.cuda_code += self.__input_assignments()
 
         # Generate equations in topological order and make intermediary node 
         # a probabilistic assignment
@@ -677,7 +834,7 @@ void read_pruning_vectors(const char* filename, int* h_p_vector, int totalThread
 
         """
 
-    def __generate_cuda_main_pruned(self, threads_per_block:int = 256, 
+    def __cuda_main_pruned(self, threads_per_block:int = 256, 
                                     p_vector_path:str = "pruning_vectors.csv", 
                                     file_path:str = '.',
                                     save_output:bool = False) -> None:
@@ -685,13 +842,15 @@ void read_pruning_vectors(const char* filename, int* h_p_vector, int totalThread
         # Get the path removing the file name
         file_path = os.path.dirname(file_path)
 
+        NUM_USED_INPUTS = 15
+
         self.cuda_code += f"""
         
 
         int main() {{
             // Circuit parameters
             const unsigned long long num_inputs = {self.num_inputs};
-            const int num_used_inputs = 21;
+            const int num_used_inputs = {NUM_USED_INPUTS}; // Number of inputs used in the circuit
             const int num_intermediary = {len(self.intermediary)};
             const int num_combinations = 1 << num_used_inputs;
             
@@ -846,6 +1005,30 @@ void read_pruning_vectors(const char* filename, int* h_p_vector, int totalThread
     # Public Methods     #
     #====================#
 
+    def generate_random_code(self, threads_per_block:int = 256,
+                                points_per_thread:int = 10000, 
+                                file_path:str = '.', 
+                                save_output:bool = False) -> str:
+            """
+            Generate the CUDA code for the random circuits.
+    
+            Args:
+            ------
+            - threads_per_block: int
+                The number of threads per block.
+            
+            Returns:
+            ------
+            - cuda_code: str
+                The generated CUDA code.
+            """
+    
+            self.__cuda_header()
+            self.__cuda_auxiliary_functions()
+            self.__cuda_random_kernel()
+            self.__cuda_random_main(threads_per_block, points_per_thread, file_path, save_output)
+            return self.cuda_code
+
     def generate_pruned_code(self, threads_per_block:int = 256, 
                              p_vector_path:str = "pruning_vectors.csv",
                              file_path:str = '.',
@@ -864,14 +1047,14 @@ void read_pruning_vectors(const char* filename, int* h_p_vector, int totalThread
             The generated CUDA code.
         """
 
-        self.__generate_cuda_header()
-        self.__generate_cuda_auxiliary_functions_pruned()
-        self.__generate_cuda_auxiliary_functions()
-        self.__generate_cuda_kernel_pruned()
-        self.__generate_cuda_main_pruned(threads_per_block, p_vector_path, file_path, save_output)
+        self.__cuda_header()
+        self.__cuda_auxiliary_functions_pruned()
+        self.__cuda_auxiliary_functions()
+        self.__cuda_kernel_pruned()
+        self.__cuda_main_pruned(threads_per_block, p_vector_path, file_path, save_output)
         return self.cuda_code
 
-    def generate_n_points_code(self, threads_per_block: int = 1024, points_per_thread: int = 10000, file_path:str = '.') -> str:
+    def generate_n_points_code(self, threads_per_block: int = 1024, points_per_thread: int = 10000, file_path:str = '.', save_output:bool = False) -> str:
         """Generate CUDA code with N points per thread support and 64-bit limitation
         
         Args:
@@ -887,13 +1070,13 @@ void read_pruning_vectors(const char* filename, int* h_p_vector, int totalThread
             The generated CUDA code.
 
         """
-        self.__generate_cuda_header()
-        self.__generate_cuda_auxiliary_functions()
-        self.__generate_cuda_n_points_kernel(points_per_thread)
-        self.__generate_cuda_n_points_main(threads_per_block, points_per_thread, file_path)
+        self.__cuda_header()
+        self.__cuda_auxiliary_functions()
+        self.__cuda_n_points_kernel(points_per_thread)
+        self.__cuda_n_points_main(threads_per_block, points_per_thread, file_path, save_output)
         return self.cuda_code
 
-    def generate_code(self, num_blocks:int  = 1024, num_threads:int = 1024, file_path:str = '.') -> str:
+    def generate_code(self, num_blocks:int  = 1024, num_threads:int = 1024, file_path:str = '.', save_output:bool = False) -> str:
         """
         Generate the CUDA code for the LUT graph.
 
@@ -910,10 +1093,10 @@ void read_pruning_vectors(const char* filename, int* h_p_vector, int totalThread
             The generated CUDA code.
         """
 
-        self.__generate_cuda_header()
-        self.__generate_cuda_auxiliary_functions()
-        self.__generate_cuda_kernel()
-        self.__generate_cuda_main(num_threads, file_path)
+        self.__cuda_header()
+        self.__cuda_auxiliary_functions()
+        self.__cuda_kernel()
+        self.__cuda_main(num_threads, file_path, save_output)
         return self.cuda_code
     
     def write_code(self, file_path:str) -> str:
@@ -965,11 +1148,13 @@ void read_pruning_vectors(const char* filename, int* h_p_vector, int totalThread
         - file_path: str
         """
         if method == "1_point":
-            self.generate_code(num_blocks, num_threads, file_path)
+            self.generate_code(num_blocks, num_threads, file_path, save_output)
         elif method == "n_points":
-            self.generate_n_points_code(num_threads, poins_per_thread, file_path)
+            self.generate_n_points_code(num_threads, poins_per_thread, file_path, save_output)
         elif method == "pruned":
-            self.generate_pruned_code(num_threads, p_vector_path, file_path)
+            self.generate_pruned_code(num_threads, p_vector_path, file_path, save_output)
+        elif method == "random":
+            self.generate_random_code(num_threads, poins_per_thread, file_path, save_output)
         else:
             self.mensage.error("Invalid method, please use '1_point', 'n_points' or 'pruned'")
             return None

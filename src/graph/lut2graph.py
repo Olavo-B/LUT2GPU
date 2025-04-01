@@ -222,6 +222,10 @@ class Graph():
                     equation.count('?')    # Ternary operator
                 )
 
+                # 2025-03-29 12:41:05
+                # Save the original equation for later use
+                equation_bitwise = equation
+
                 # 2025-01-28 19:43:23
                 # Change Verilog sintax to C/C++ sintax
                 equation = equation.replace('^', '^')
@@ -233,6 +237,7 @@ class Graph():
                 # Store the equation and the operation count
                 equations[var_name] = {
                     "equation": equation,
+                    "equation_bitwise": equation_bitwise,
                     "operations": operation_count
                 }
 
@@ -420,6 +425,7 @@ class Graph():
             if node in equations.keys():
                 self.G.nodes[node]['equation'] = equations[node]['equation']
                 self.G.nodes[node]['operations'] = equations[node]['operations']
+                self.G.nodes[node]['equation_bitwise'] = equations[node]['equation_bitwise']
 
     #====================#
     # Public Methods     #
