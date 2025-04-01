@@ -141,7 +141,7 @@ def main():
         path=PATH,
         verilog_path=f'{os.path.basename(args.verilog)}', 
         top_module=args.top_module,
-        args={'otimizations': ["resyn3", 'resyn'], 'lut_k': args.lut_size},
+        args={'otimizations': ['compress2rs'], 'lut_k': args.lut_size},
         debug=args.debug
     )
     scripts.run_yosys()
@@ -188,13 +188,14 @@ def main():
                 method=args.method,
                 probability=args.probability
             )
-        
+    
         if 'verilator' in run_modes:
             print("\n🔬 Running Verilator Simulation:")
             runner.run_verilator(
                 verilator_path=f'{base_path}/verilator', 
                 num_runs=args.num_runs
             )
+        
 
         # Analyze overall results
         print("\n📊 Performance Analysis:")
