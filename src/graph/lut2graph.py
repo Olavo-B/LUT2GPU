@@ -127,6 +127,7 @@ class Graph():
 
         binary_vector = [1, 0, 1, 1]
         """
+
         vector_size = 2 ** num_vars
         binary_vector = [0 if int(pla_table[0]['output'])==1 else 1] * vector_size
 
@@ -222,6 +223,18 @@ class Graph():
                     equation.count('?')    # Ternary operator
                 )
 
+                # 2025-04-14 11:41:30
+                # If equation is just a bit (1'b0 or 1'b1), set it to 0 or 1
+                if equation.startswith('1\'b'):
+                    equation = equation.replace('1\'b', '')
+                    equation = equation.replace('0\'b', '')
+                    if equation == '0':
+                        equation = '0'
+                    elif equation == '1':
+                        equation = '1'
+                    else:
+                        raise ValueError(f"Invalid bit value: {equation}")
+
                 # 2025-03-29 12:41:05
                 # Save the original equation for later use
                 equation_bitwise = equation
@@ -232,6 +245,8 @@ class Graph():
                 equation = equation.replace('&', '&&')
                 equation = equation.replace('|', '||')
                 equation = equation.replace('~', '!')
+
+
 
 
                 # Store the equation and the operation count
@@ -409,9 +424,22 @@ class Graph():
 
                 self.G.nodes[current_node]['input_order'] = dependencies_rename
                 self.G.nodes[current_node]['truth_value'] = None
+
+                # 2025-04-14 11:35:00, when the node has no dependencies
+                if len(dependencies_rename) == 0:
+                    self.G.nodes[current_node]['truth_value'] = 1
+                    self.G.nodes[current_node]['equation'] = 1
+                    self.G.nodes[current_node]['operations'] = 0
+                    self.G.nodes[current_node]['equation_bitwise'] = 1
+                    node_data[current_node].append({"input": [], "output": 1})
+
+
             elif parsing_names and current_node is not None and len(tokens) > 1:
                 input_values = tokens[:-1]
                 output_value = tokens[-1]
+
+                
+
                 node_data[current_node].append({"input": input_values, 
                                                 "output": output_value})
             else:
@@ -434,7 +462,10 @@ class Graph():
     # Graph visualization with Pyvis
     def graph_visu(self, path):
         # Make a .html for download (nt.show() has some kind of problem on Colab)
+
+
         nt = net.Network(directed=True)
+        nx.node_link_data(self.G, edges="edges")
         nt.from_nx(self.G)
         nt.save_graph(f'{path}/digraph_visualization.html')
         
@@ -447,6 +478,10 @@ class Graph():
         A string representing the path to save the graph."
         
         """
+        # 2025-04-09 14:22:00: Disable FutureWarning
+        import warnings
+        warnings.filterwarnings("ignore", category=FutureWarning)
+
         f = json.dumps(nx.node_link_data(self.G))
         with open(f'{path}/graph.json', 'w') as file:
             file.write(f)
