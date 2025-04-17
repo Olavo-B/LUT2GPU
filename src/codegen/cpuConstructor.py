@@ -217,6 +217,7 @@ void evaluate_circuit(std::vector<uint32_t>& output, const int chunk_size, const
             {self.__output_assignments_random()}
 
             // Store the result in the correct position
+            result ^= soma;
             output[base_idx + i] = result;
 
         }}

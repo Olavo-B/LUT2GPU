@@ -273,10 +273,13 @@ class VerilogTestbenchGenerator:
             "        // Exhaustive testing of all input combinations"
         ]
 
+        # Max number of inputs
+        MAX_INPUTS = 17
+
         # Generate all possible binary combinations
         def generate_combinations(num_inputs):
             if self.debug: self.mensage.debug(f"Generating all possible combinations for {num_inputs} inputs")
-            return 2 ** num_inputs if num_inputs <= 30 else 2 ** 30
+            return 2 ** num_inputs if num_inputs <= 30 else 2 ** MAX_INPUTS #2025-04-14 15:56:07 Limit to 10k combinations
 
         # Generate total input combinations
         input_combinations = generate_combinations(len(self.inputs))
@@ -293,7 +296,7 @@ class VerilogTestbenchGenerator:
         
         # Assign inputs based on combination
         for i, input_port in enumerate(self.inputs):
-            if i >= 29:
+            if i >= MAX_INPUTS-1:
                 test_cases.append(f"                {input_port} = 0;")
             else:
                 test_cases.append(f"                {input_port} = test_index[{i}];")

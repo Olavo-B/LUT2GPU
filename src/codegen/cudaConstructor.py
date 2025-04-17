@@ -54,10 +54,6 @@ class CudaGenerator():
         self.effective_outputs = min(self.num_outputs, max_outputs)
 
         
-        if self.num_inputs > max_inputs:
-            self.mensage.warning(f"Number of inputs ({self.num_inputs}) exceeds {max_inputs} bits. Only using least significant {max_inputs} bits.")
-        if self.num_outputs > max_outputs:
-            self.mensage.warning(f"Number of outputs ({self.num_outputs}) exceeds {max_outputs} bits. Only storing least significant {max_outputs} bits.")
     
     def __str__(self):
         return self.cuda_code
@@ -116,7 +112,7 @@ void save_results(unsigned int *h_output, int totalThreads, const char* filename
 
     fprintf(file, "thread_index,match_count\\n");
     for (int i = 0; i < totalThreads; i++) {
-        fprintf(file, "%d,%llu\\n", i, h_output[i]);
+        fprintf(file, "%d,%u\\n", i, h_output[i]);
     }
 
     fclose(file);
@@ -260,7 +256,7 @@ __global__ void evaluate_circuit(unsigned int *output, int points_per_thread, co
 
     """
 
-    def __cuda_random_main(self, threads_per_block: int = 256, points_per_thread: int = 10000, file_path:str = '.', save_output:bool = True) -> None:
+    def __cuda_random_main(self, threads_per_block: int = 256, points_per_thread: int = 171, file_path:str = '.', save_output:bool = True) -> None:
         """
         Generate main function with random inputs with no limitation on the number of bits.
         """
@@ -276,7 +272,7 @@ int main() {{
     const int numSMs = 24;  // For RTX 4060
     const int blocksPerSM = 32;
     const int optimalBlocks = numSMs * blocksPerSM;
-    const int pointsPerThread = 171;
+    const int pointsPerThread = {points_per_thread};
     
     const unsigned long long threadsPerLaunch = (unsigned long long)optimalBlocks * threadsPerBlock;
     const unsigned long long pointsPerLaunch = threadsPerLaunch * pointsPerThread;
@@ -635,7 +631,29 @@ int main() {{
     # https://excalidraw.com/#json=M1w6ra-W40Ku2GjYRafUr,3s59EjNpxx81gOY-lzxtDg #
     #===========================================================================#
 
-    def __cuda_auxiliary_functions_pruned(self) -> None:
+    def __input_assignments_pruned(self) -> str:
+        """
+        Generate input assignments for pruned circuits.
+        It generate xN random number os 32 bits using currand
+        (N been the number of inputs/32)
+        and then assign the values to the input variables, divided by 32 bits.
+
+        """
+
+        code = "\n        // Set input values\n"
+        # Number of xN random numbers to generate
+        num_random_numbers = (self.num_inputs + 31) // 32
+        # Generate xN random numbers using curand
+        for i in range(num_random_numbers):
+            code += f"        unsigned int x{i} = curand(&state);\n"
+        # Generate input assignments for pruned circuits
+        for i, input_var in enumerate(reversed(self.inputs)):
+            # Assign the value of xN to the input variable
+            code += f"        {input_var} = (x{i // 32} >> {i % 32}) & 1;\n"
+
+        return code
+
+    def __cuda_auxiliary_functions_pruned(self, error_function: str = 'ER', custon_function:str = None) -> None:
         """
         Generate the auxiliary functions for pruned circuits. 
         It includes the following functions:
@@ -646,16 +664,40 @@ int main() {{
         - read_pruning_vectors:
             A function that reads the pruning vectors from a CSV file.
 
+        Parameters:
+        -----------
+        - error_function: str
+            The error function to use. It can be 'ER' for Hamming distance
+        - custon: str
+            The custom error function to use. It's the path to a file that contains the function.
+
         """
 
-        self.cuda_code += f"""
-    __device__ bool alt_assert(unsigned long long input, unsigned long long expected) {{
-        if (__popc(input ^ expected) != 0) {{
-           return false;
-        }}
-        return true;
-    }}
+        if custon_function is not None and os.path.exists(custon_function):
+            # Read the custom function from the file
+            self.cuda_code += f"""
+__device__ bool alt_assert(unsigned long long input, unsigned long long expected) {{
+"""
+            with open(custon_function, 'r') as f:
+                self.cuda_code += f.read()
 
+            self.cuda_code += """
+}
+"""
+        elif error_function == 'ER':
+
+            self.cuda_code += f"""
+__device__ bool alt_assert(unsigned long long input, unsigned long long expected) {{
+    if (__popc(input ^ expected) != 0) {{
+    return false;
+    }}
+    return true;
+}}
+"""
+        else:
+            self.mensage.error(f"Error function {error_function} not supported.")
+            
+        self.cuda_code += """           
 void generate_random_vector(int* h_input, int num_inputs, int num_combinations) {{
     // Use modern C++ random number generation
     std::random_device rd;
@@ -703,6 +745,8 @@ void read_pruning_vectors(const char* filename, int* h_p_vector, int totalThread
     
     // Skip header if exists
     fgets(line, sizeof(line), file);
+    // Do something with the header to not raise a warning
+    line[0] = line[0];
     
     // Read data lines
     while (fgets(line, sizeof(line), file) && thread_idx < totalThreads) {{
@@ -745,12 +789,17 @@ void read_pruning_vectors(const char* filename, int* h_p_vector, int totalThread
         """
 
         self.cuda_code += f"""
-    __global__ void evaluate_circuit(int *output, int *input, int inputsize, int *p_vector, int *v_vector) {{
+    __global__ void evaluate_circuit(int *output, int inputsize, int *p_vector, int *v_vector) {{
 
         // Get the index of the thread
         unsigned long long idx = blockIdx.x * blockDim.x + threadIdx.x;
         int assert_count = 0; // sum of the assert function (max value is inputsize)
         const int num_intermediary = {len(self.intermediary)}; // Number of intermediary nodes
+
+        // Initialize cuRAND
+        curandState state;
+        int seed = inputsize;
+        curand_init(seed, idx, 0, &state);
 
         // Pre-calculate p_vector and v_vector offsets for this thread
         const int p_offset = idx * num_intermediary;
@@ -772,9 +821,8 @@ void read_pruning_vectors(const char* filename, int* h_p_vector, int totalThread
 
         # Input variable assignments
         self.cuda_code += "\n        // Set input values\n"
-        self.cuda_code += "        unsigned long long x = input[i];\n"
 
-        self.cuda_code += self.__input_assignments()
+        self.cuda_code += self.__input_assignments_pruned()
 
         self.cuda_code += "\n        // Evaluate circuit in topological order\n"
 
@@ -787,15 +835,13 @@ void read_pruning_vectors(const char* filename, int* h_p_vector, int totalThread
 
         self.cuda_code += "\n        // Combine outputs into a single integer\n"
         # Adjust output indexing to use relative index within the launch
-        self.cuda_code += "        unsigned long long expected_output_word = 0;\n"
+        self.cuda_code += "        int expected_output_word = 0;\n"
 
         # Combine outputs
         for i, output in enumerate(self.outputs):
-            self.cuda_code += f"        expected_output_word |= ({output} << {i});\n"
+            # self.cuda_code += f"        expected_output_word |= ({output} << {i});\n"
+            self.cuda_code += f"        expected_output_word ^= ({output});\n"
 
-        # 2025-02-19 17:50:15: Input variable assignments again due to new evaluation
-
-        self.cuda_code += self.__input_assignments()
 
         # Generate equations in topological order and make intermediary node 
         # a probabilistic assignment
@@ -814,15 +860,19 @@ void read_pruning_vectors(const char* filename, int* h_p_vector, int totalThread
         
         self.cuda_code += "\n        // Combine outputs into a single integer\n"
         # Adjust output indexing to use relative index within the launch
-        self.cuda_code += "        unsigned long long pruned_output_word = 0;\n"
+        self.cuda_code += "        int pruned_output_word = 0;\n"
 
         # Combine outputs
         for i, output in enumerate(self.outputs):
-            self.cuda_code += f"        pruned_output_word |= ({output} << {i});\n"
+            # self.cuda_code += f"        pruned_output_word |= ({output} << {i});\n"
+            self.cuda_code += f"        pruned_output_word ^= ({output});\n"
+
 
         self.cuda_code += """
         // Check if the output is the expected output
         assert_count += alt_assert(pruned_output_word, expected_output_word);
+  
+
         }
         """
 
@@ -842,7 +892,7 @@ void read_pruning_vectors(const char* filename, int* h_p_vector, int totalThread
         # Get the path removing the file name
         file_path = os.path.dirname(file_path)
 
-        NUM_USED_INPUTS = 15
+        NUM_USED_INPUTS = 18
 
         self.cuda_code += f"""
         
@@ -877,23 +927,15 @@ void read_pruning_vectors(const char* filename, int* h_p_vector, int totalThread
             CHECK_CUDA_ERROR(cudaEventCreate(&stop));
             
             // Allocate host memory
-            int *h_input = (int*)malloc(num_combinations * sizeof(int));
             int *h_output = (int*)malloc(totalThreads * sizeof(int));
             int *h_p_vector = (int*)malloc(totalThreads * num_intermediary * sizeof(int));
             int *h_v_vector = (int*)malloc(totalThreads * num_intermediary * sizeof(int));
             
-            if (!h_input || !h_output || !h_p_vector || !h_v_vector) {{
+            if ( !h_output || !h_p_vector || !h_v_vector) {{
                 printf("Error: Host memory allocation failed\\n");
                 exit(1);
             }}
             
-            // Initialize input combinations
-            /*
-            *for (int i = 0; i < num_combinations; i++) {{
-            *    h_input[i] = (unsigned long long)i;
-            *}}
-            */
-            generate_random_vector(h_input, num_used_inputs, num_combinations);
             
             // Allocate and initialize vectors for each thread
             for (int i = 0; i < totalThreads; i++) {{
@@ -907,15 +949,13 @@ void read_pruning_vectors(const char* filename, int* h_p_vector, int totalThread
             read_pruning_vectors("{p_vector_path}", h_p_vector, totalThreads, num_intermediary);
             
             // Allocate device memory
-            int *d_input, *d_output;
+            int *d_output;
             int *d_p_vector, *d_v_vector;
-            CHECK_CUDA_ERROR(cudaMalloc(&d_input, num_combinations * sizeof(int)));
             CHECK_CUDA_ERROR(cudaMalloc(&d_output, totalThreads * sizeof(int)));
             CHECK_CUDA_ERROR(cudaMalloc(&d_p_vector, totalThreads * num_intermediary * sizeof(int)));
             CHECK_CUDA_ERROR(cudaMalloc(&d_v_vector, totalThreads * num_intermediary * sizeof(int)));
             
             // Copy data to device
-            CHECK_CUDA_ERROR(cudaMemcpy(d_input, h_input, num_combinations * sizeof(int), cudaMemcpyHostToDevice));
             CHECK_CUDA_ERROR(cudaMemcpy(d_p_vector, h_p_vector, totalThreads * num_intermediary * sizeof(int), cudaMemcpyHostToDevice));
             CHECK_CUDA_ERROR(cudaMemcpy(d_v_vector, h_v_vector, totalThreads * num_intermediary * sizeof(int), cudaMemcpyHostToDevice));
 
@@ -926,7 +966,7 @@ void read_pruning_vectors(const char* filename, int* h_p_vector, int totalThread
             // Launch kernel
             printf("Starting kernel execution...\\n");
             CHECK_CUDA_ERROR(cudaEventRecord(start));
-            evaluate_circuit<<<optimalBlocks, threadsPerBlock>>>(d_output, d_input, num_combinations, d_p_vector, d_v_vector);
+            evaluate_circuit<<<optimalBlocks, threadsPerBlock>>>(d_output, num_combinations, d_p_vector, d_v_vector);
             CHECK_CUDA_ERROR(cudaEventRecord(stop));
             
             // Copy results back to host
@@ -983,12 +1023,10 @@ void read_pruning_vectors(const char* filename, int* h_p_vector, int totalThread
             }}
             
             // Cleanup
-            free(h_input);
             free(h_output);
             free(h_p_vector);
             free(h_v_vector);
             
-            CHECK_CUDA_ERROR(cudaFree(d_input));
             CHECK_CUDA_ERROR(cudaFree(d_output));
             CHECK_CUDA_ERROR(cudaFree(d_p_vector));
             CHECK_CUDA_ERROR(cudaFree(d_v_vector));
@@ -1032,7 +1070,9 @@ void read_pruning_vectors(const char* filename, int* h_p_vector, int totalThread
     def generate_pruned_code(self, threads_per_block:int = 256, 
                              p_vector_path:str = "pruning_vectors.csv",
                              file_path:str = '.',
-                             save_output:bool = False) -> str:
+                             save_output:bool = False,
+                             error_function:str = 'ER',
+                             custon:str = None) -> str:
         """
         Generate the CUDA code for the pruned circuits.
 
@@ -1040,6 +1080,16 @@ void read_pruning_vectors(const char* filename, int* h_p_vector, int totalThread
         ------
         - threads_per_block: int
             The number of threads per block.
+        - p_vector_path: str
+            The path to the pruning vectors file.
+        - file_path: str
+            The path to the output file.
+        - save_output: bool
+            Whether to save the output to a file.
+        - error_function: str
+            The error function to use. It can be 'ER' for Hamming distance
+        - custon: str
+            The custom error function to use. It's the path to a file that contains the function.
         
         Returns:
         ------
@@ -1048,7 +1098,7 @@ void read_pruning_vectors(const char* filename, int* h_p_vector, int totalThread
         """
 
         self.__cuda_header()
-        self.__cuda_auxiliary_functions_pruned()
+        self.__cuda_auxiliary_functions_pruned(error_function, custon)
         self.__cuda_auxiliary_functions()
         self.__cuda_kernel_pruned()
         self.__cuda_main_pruned(threads_per_block, p_vector_path, file_path, save_output)
@@ -1129,7 +1179,9 @@ void read_pruning_vectors(const char* filename, int* h_p_vector, int totalThread
             num_threads:int = 1024, 
             poins_per_thread:int = 10000,
             p_vector_path:str = "pruning_vectors.csv",
-            save_output:bool = False) -> str:
+            save_output:bool = False,
+            error_function:str = 'ER',
+            custon_function:str = None) -> str:
         """
         Run the CUDA code.
 
@@ -1152,7 +1204,7 @@ void read_pruning_vectors(const char* filename, int* h_p_vector, int totalThread
         elif method == "n_points":
             self.generate_n_points_code(num_threads, poins_per_thread, file_path, save_output)
         elif method == "pruned":
-            self.generate_pruned_code(num_threads, p_vector_path, file_path, save_output)
+            self.generate_pruned_code(num_threads, p_vector_path, file_path, save_output, error_function, custon_function)
         elif method == "random":
             self.generate_random_code(num_threads, poins_per_thread, file_path, save_output)
         else:
