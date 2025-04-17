@@ -1,0 +1,28 @@
+    // Weight vector for the 26 least significant bits (po0 to po25)
+    // Higher bits have higher importance
+    const float weights[26] = {
+        0, 0, 0, 0,                 // po0–po3 (N388-N391) - lowest importance
+        0, 0, 0, 0,                 // po4–po7 (N418-N421)
+        0, 0, 0, 0,                 // po8–po11 (N422-N446)
+        0, 0, 0, 0,                 // po12–po15 (N447-N767)
+        0, 1/256, 1/128, 1/64,      // po16–po19 (N768-N864)
+        1/32, 1/16, 1/8, 1/4,       // po20–po23 (N865-N878)
+        1/2, 1.0                    // po24–po25 (N879-N880) - highest importance
+    };
+
+    float total_error = 0.0f;
+
+    // Compare the 26 output bits
+    for (int i = 0; i < 26; ++i) {
+        int bit_input = (input >> i) & 1;
+        int bit_expected = (expected >> i) & 1;
+        if (bit_input != bit_expected) {
+            total_error += weights[i];
+        }
+    }
+
+    // Define a tolerable error threshold (adjustable based on your application)
+    const float error_threshold = 0.5f;
+
+
+    return total_error <= error_threshold;
