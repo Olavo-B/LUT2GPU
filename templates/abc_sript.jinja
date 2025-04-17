@@ -157,16 +157,16 @@ rl {{ blif_file }}
 
 # Loop para otimizações
 {% for otimization in otimizations %}
-{{ otimization }}; ps;
+# {{ otimization }}; ps;
 {% endfor %}
 
 
 # Transforma em AIG
-strash;
+# strash;
 
 
 # Mapeamento em LUTs (K=5)
-if -K {{ lut_k }}; ps;
+if -K {{ lut_k }} -a; ps;
 
 
 # Limpeza do circuito

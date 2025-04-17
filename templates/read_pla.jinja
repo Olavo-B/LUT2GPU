@@ -1,36 +1,39 @@
-# Lê o arquivo Verilog e define o módulo top
+{# Lê o arquivo dependendo da extensão #}
+{% if verilog_path.endswith('.blif') %}
+read_blif {{ verilog_path }}
+{% elif verilog_path.endswith('.v') %}
 read_verilog {{ verilog_path }}
-hierarchy -check -top {{top_module}}
+{% else %}
+echo "Erro: Formato de arquivo não suportado."
+exit 1
+{% endif %}
+
+hierarchy -check -top {{ top_module }}
 
 # Perform generic synthesis
-opt_expr
-opt_merge -nomux
-proc
-opt_muxtree
-opt_reduce
-opt_merge
-opt_clean
-opt_expr
+# opt_expr
+# opt_merge -nomux
+# proc
+# opt_muxtree
+# opt_reduce
+# opt_merge
+# opt_clean
+# opt_expr
 synth -flatten
-opt_clean
+# opt_clean
+# 
+# flowmap -maxlut 5
+# 
+# clean
+# opt_clean
+# flatten
+# techmap; opt
+# dffunmap
 
-
-flowmap -maxlut 5
-
-clean
-opt_clean
-flatten
-techmap; opt
-dffunmap
-
-
-tee -o {{output_path}}/report.json stat -json
-
-
+tee -o {{ output_path }}/report.json stat -json
 
 # Export netlists
-write_blif -gates {{output_path}}/somador.blif
-abc -liberty /yosys/examples/cmos/cmos_cells.lib -script {{output_path}}/abc_script.rc
-
+write_blif -gates {{ output_path }}/somador.blif
+abc -liberty /yosys/examples/cmos/cmos_cells.lib -script {{ output_path }}/abc_script.rc
 
 stat
