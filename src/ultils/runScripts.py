@@ -57,6 +57,7 @@ class RunScripts():
         with open(f"{self.path}/abc_script.rc", "w") as file:
             file.write(abc_script)
 
+
         yosys_script = template_yosys.render(verilog_path=self.verilog,
                                             top_module=self.top_module,
                                             abc_script=f"{self.path}/abc_script.abc",

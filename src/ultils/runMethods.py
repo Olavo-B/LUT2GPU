@@ -352,7 +352,8 @@ class RunMethods:
     def run_cuda(self, cuda_path: str, threads_per_block: int = 256, 
                 blocks_per_grid: int = 768, num_runs: int = 10,
                 method: str = '1_point', profile: bool = False,
-                probability: int = 2):
+                probability: int = 2, error_function: str = 'ER',
+                points_per_thread: int = 4000):
         """Run and profile CUDA implementation."""
         self.mensage.info("Initializing CUDA execution:")
         self.mensage.info(f"• Threads per block: {threads_per_block}")
@@ -361,6 +362,7 @@ class RunMethods:
         self.mensage.info(f"• Method: {method}")
         self.mensage.info(f"• Profile: {profile}")
         self.mensage.info(f"• Probability: {probability}")
+        self.mensage.info(f"• Error function: {error_function}")
         
 
         # 2025-02-25 15:31:32: 
@@ -382,11 +384,13 @@ class RunMethods:
                                 num_blocks=blocks_per_grid,
                                 num_threads=threads_per_block,
                                 poins_per_thread=4000,
-                                p_vector_path=f'{cuda_path}/p_vector.csv',)
+                                p_vector_path=f'{cuda_path}/p_vector.csv',
+                                error_function=error_function,
+                                custon_function=error_function,)
 
         # Compile CUDA code
         if self.debug: self.mensage.debug("Compiling CUDA code...")
-        compile_cmd = f"nvcc -lineinfo {exe_path} -o {cuda_path}/circuit_evaluator"
+        compile_cmd = f"nvcc -arch=sm_89 -O3 -lineinfo {exe_path} -o {cuda_path}/circuit_evaluator"
         try:
             subprocess.run(compile_cmd, shell=True, check=True)
         except subprocess.CalledProcessError:
