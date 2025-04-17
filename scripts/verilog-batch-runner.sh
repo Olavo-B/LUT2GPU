@@ -15,13 +15,16 @@ print_usage() {
     echo ""
     echo "Additional options:"
     echo "  --name            Name prefix for test runs (default: verilog_test)"
-    echo "  --num-runs        Number of performance test runs (default: 10)"
+    echo "  --top-module     Specify the top module name (default: derived from filename)"
+    echo "  --num-runs        Number of performance test runs (default: 5)"
     echo "  --lut-size        Number of LUTs in the FPGA (default: 5)"
     echo "  --cuda-threads    CUDA threads per block (default: 256)"
     echo "  --cuda-blocks     CUDA blocks per grid (default: 768)"
+    echo "  --chunk-size      Points per thread (default: 171)"
     echo "  --method          Specify the method to use for simulation"
     echo "  --timeout         Set timeout in seconds (default: 3600, 0 for no timeout)"
     echo "  --profile         Enable CUDA profiling"
+    echo "  --error-function   Specify the error function to use (default: ER)"
     echo "  --debug           Enable debug output"
     echo "  -h, --help        Display this help message"
 }
@@ -91,7 +94,9 @@ process_file() {
         --lut-size \"$NUM_LUTS\" \
         --cuda-threads \"$CUDA_THREADS\" \
         --cuda-blocks \"$CUDA_BLOCKS\" \
+        --points-per-thread \"$CHUNK_SIZE\" \
         --method \"$METHOD\" \
+        --error-function \"$ERROR_FUNCTION\" \
         $PROFILE \
         $DEBUG" > "$temp_script"
     
@@ -129,13 +134,15 @@ process_file() {
 DIRECTORY=""
 SIMULATION_MODE="--all"
 TEST_NAME="verilog_test"
-NUM_RUNS=10
+NUM_RUNS=5
 NUM_LUTS=5
 CUDA_THREADS=256
 CUDA_BLOCKS=768
+CHUNK_SIZE=171
 TIMEOUT_VALUE=3600
 PROFILE=""
 DEBUG=""
+ERROR_FUNCTION="ER"
 METHOD="1_point"
 declare -a current_pids=()
 
@@ -154,6 +161,10 @@ while [[ $# -gt 0 ]]; do
             TEST_NAME="$2"
             shift 2
             ;;
+        --top-module)
+            TOP_MODULE="$2"
+            shift 2
+            ;;
         --num-runs)
             NUM_RUNS="$2"
             shift 2
@@ -168,6 +179,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --cuda-blocks)
             CUDA_BLOCKS="$2"
+            shift 2
+            ;;
+        --chunk-size)
+            CHUNK_SIZE="$2"
             shift 2
             ;;
         --method)
@@ -185,6 +200,10 @@ while [[ $# -gt 0 ]]; do
         --debug)
             DEBUG="--debug"
             shift
+            ;;
+        --error-function)
+            ERROR_FUNCTION="$2"
+            shift 2
             ;;
         -h|--help)
             print_usage
@@ -229,12 +248,18 @@ for vfile in $VERILOG_FILES; do
     count=$((count + 1))
     echo ""
     echo "Processing file $count: $vfile"
-    
-    # Extract module name from filename (remove path and extension)
-    MODULE_NAME=$(basename "$vfile" .v)
-    
+
+    if [ -n "$TOP_MODULE" ]; then
+        MODULE_NAME="$TOP_MODULE"
+    else
+        # Extract the module name from the filename
+        MODULE_NAME=$(basename "$vfile" .v)
+        
+    fi
+
+    FILE_NAME=$(basename "$vfile" .v)
     # Generate a unique name for this test run
-    current_test_name="${TEST_NAME}_${MODULE_NAME}"
+    current_test_name="${TEST_NAME}_${FILE_NAME}"
     
     echo "Using module name: $MODULE_NAME"
     if [ "$TIMEOUT_VALUE" -gt 0 ]; then

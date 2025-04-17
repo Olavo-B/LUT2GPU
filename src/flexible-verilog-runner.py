@@ -83,6 +83,11 @@ def main():
                         default=768, 
                         help='CUDA blocks per grid (default: 768)')
     
+    parser.add_argument('--points-per-thread',
+                        type=int,
+                        default=4000,
+                        help='Chunk size for simulation (default: 4000)')
+    
     parser.add_argument('--probability',
                         type=int,
                         default=50,
@@ -105,6 +110,10 @@ def main():
                         type=str,
                         default='results',
                         help='Output directory for results (default is results)')
+    parser.add_argument('--error-function',
+                        type=str,
+                        default='ER',
+                        help='Error function to use, if custon, a path to the function implementation (default: ER)')
 
     # Parse arguments
     args = parser.parse_args()
@@ -169,7 +178,9 @@ def main():
                 num_runs=args.num_runs,
                 method=args.method,
                 probability=args.probability, 
-                profile=args.profile
+                profile=args.profile,
+                error_function=args.error_function,
+                points_per_thread=args.points_per_thread
             )
         
         # if 'iverilog' in run_modes:
