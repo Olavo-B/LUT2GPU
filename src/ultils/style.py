@@ -21,6 +21,7 @@ class Style():
     BRIGHT = '\033[1m'
     YELLOW = '\033[93m'
     RESET = '\033[0m'
+    ORANGERED = '\033[1m\033[38;2;255;165;0m'
 
 class Mensage():
     @staticmethod
@@ -50,7 +51,7 @@ class Mensage():
     @staticmethod
     def title():
         print(rf"""
-{Style.BRIGHT}      ___           ___     
+{Style.ORANGERED}      ___           ___     
      /  /\         /  /\    
     /  /:/_       /  /::\   
    /  /:/ /\     /  /:/\:\  
@@ -73,5 +74,5 @@ class Mensage():
     \  \:\      \  \:\         /__/:/          \__\/
      \__\/       \__\/         \__\/                
 
-{Style.RESET}""")
+{Style.ENDC}""")
     
