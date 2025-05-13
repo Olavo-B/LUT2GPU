@@ -40,6 +40,7 @@ The script performs:
 Launch the project environment:
 ```bash
 ./run.sh
+docker exec -it lut2gpu bash 
 ```
 
 This will:
@@ -90,6 +91,29 @@ This will:
       --help                  "Display this help message"
 
 ```
+
+### Flexible Verilog Runner
+```bash
+python src/flexible-verilog-runner.py 
+   Usage: python flexible-verilog-runner.py [options]
+
+   Required arguments:
+     --verilog-file     "Path to the Verilog file to process"
+     --output-dir       "Directory where output files will be saved"
+
+   Simulation parameters:
+     --lut-size         "Number of LUTs in the FPGA (default: 5)"
+     --cuda-threads     "CUDA threads per block (default: 256)"
+     --cuda-blocks      "CUDA blocks per grid (default: 768)"
+
+   Additional options:
+     --method           "Specify the method to use for simulation"
+     --timeout          "Set timeout in seconds (default: 3600, 0 for no timeout)"
+     --profile          "Enable CUDA profiling"
+     --debug            "Enable debug output"
+     -h, --help         "Display this help message"
+
+```
 ## Project Structure
 
 ```
@@ -121,6 +145,11 @@ LUT2GPU/
    - LUT graph representation
    - Graph visualization
    - Graph optimization
+
+4. **Run Method** (`src/utils/runMethod.py`):
+   - Verilog simulation execution
+   - Performance benchmarking
+   - Result analysis
 
 
 ## Troubleshooting
