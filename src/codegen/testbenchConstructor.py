@@ -179,10 +179,13 @@ class VerilogTestbenchGenerator:
             str: Verilog signal declarations
         """
         signals = []
-        for input_port in self.inputs:
-            signals.append(f"    reg {input_port};")
-        for output_port in self.outputs:
-            signals.append(f"    wire {output_port};")
+        # for input_port in self.inputs:
+        #     signals.append(f"    reg {input_port};")
+        # for output_port in self.outputs:
+        #     signals.append(f"    wire {output_port};")
+
+        signals.append(f"    reg [{len(self.inputs)-1}:0] inputs;")
+        signals.append(f"    wire [{len(self.outputs)-1}:0] outputs;")
         return "\n".join(signals)
 
     def _generate_dut_port_mapping(self) -> str:
@@ -193,10 +196,10 @@ class VerilogTestbenchGenerator:
             str: Verilog port mapping
         """
         port_mappings = []
-        for input_port in self.inputs:
-            port_mappings.append(f"        .{input_port}({input_port})")
-        for output_port in self.outputs:
-            port_mappings.append(f"        .{output_port}({output_port})")
+        for idx, input_port in enumerate(self.inputs):
+            port_mappings.append(f"        .{input_port}(inputs[{idx}])")
+        for idx, output_port in enumerate(self.outputs):
+            port_mappings.append(f"        .{output_port}(outputs[{idx}])")
         return ",\n".join(port_mappings)
     
     def __generate_grouped_test_cases(self) -> str:
@@ -274,7 +277,7 @@ class VerilogTestbenchGenerator:
         ]
 
         # Max number of inputs
-        MAX_INPUTS = 17
+        MAX_INPUTS = 14
 
         # Generate all possible binary combinations
         def generate_combinations(num_inputs):
