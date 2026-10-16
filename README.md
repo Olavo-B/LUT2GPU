@@ -159,6 +159,21 @@ Common issues:
 - Docker permission denied: Add user to docker group
 - Jupyter connection failed: Check port availability
 
+## Citation
+
+If you use GO FAST in your research, please cite:
+
+```bibtex
+@inproceedings{barros2025go,
+  title={Go Fast: GPU Optimizer for FPGA-LUT Approximate Simulation and Tuning},
+  author={Barros, Olavo and Freitas, Isabela and Coura, Pedro and Nacif, Jos{\'e} Augusto M and Ferreira, Ricardo and Alcolea, Adri{\'a}n and Villarroya-Gaud{\'o}, Mar{\'\i}a and Resano, Javier},
+  booktitle={2025 XV Symposium on Computing Systems Engineering (SBESC)},
+  pages={1--6},
+  year={2025},
+  organization={IEEE}
+}
+```
+
 ## License
 
 MIT License - see LICENSE file
